@@ -15,8 +15,16 @@ SPLITTERS = [
     {
         "name": "split_by_user",
         "split_function": r'user="(?:.*?\()?(?P<username>[a-zA-Z0-9._-]+)\s*(?:\))?"',
-        "filter": [], 
-        "filter_from_file": "uniqusers",
+        "filter": [""], 
+        "filter_from_file": "",
+        "enabled": False,
+        "type": "string"
+    },
+    {
+        "name": "split_by_user_dn",
+        "split_function": r'user_dn="(?P<user_dn>.*?)"',
+        "filter": [""], 
+        "filter_from_file": "",
         "enabled": True,
         "type": "string"
     },
@@ -53,7 +61,6 @@ SPLITTERS = [
         "type": "string"
     }
 ]
-
 
 def load_filter_list(splitter):
     """Load filters from file and/or inline list."""
