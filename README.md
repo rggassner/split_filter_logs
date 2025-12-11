@@ -191,6 +191,14 @@ This project is licensed under the **MIT License** — feel free to use, modify,
 * `.gz` files are read transparently — no manual decompression needed
 * If a regex doesn’t define a named group (`?P<name>`), the entire match is used as the key
 
+## TODO
+
+* Generate a hash_manifest.txt
+* Guess an ETA based on total file sizes and already processed data.
+
 ---
+
+
+
 
 > **LogSplitter** — Simple. Parallel. Reliable. Perfect for massive log archives.
