@@ -25,6 +25,14 @@ SPLITTERS = [
         "split_function": r'user_dn="(?P<user_dn>.*?)"',
         "filter": [""], 
         "filter_from_file": "",
+        "enabled": False,
+        "type": "string"
+    },
+    {
+        "name": "split_by_session_uid",
+        "split_function": r'session_uid="(?P<session_uid>.*?)"',
+        "filter": [""], 
+        "filter_from_file": "",
         "enabled": True,
         "type": "string"
     },
@@ -61,6 +69,8 @@ SPLITTERS = [
         "type": "string"
     }
 ]
+
+
 
 def load_filter_list(splitter):
     """Load filters from file and/or inline list."""
