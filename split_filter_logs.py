@@ -73,7 +73,6 @@ SPLITTERS = [
 
 
 def load_filter_list(splitter):
-    """Load filters from file and/or inline list."""
     filters = list(splitter.get("filter", []))  # start with inline filter
     if splitter.get("filter_from_file"):
         try:
@@ -89,7 +88,6 @@ def load_filter_list(splitter):
     return filters
 
 
-# Precompile regexes and capture group names for enabled rules
 COMPILED_SPLITTERS = []
 for splitter in SPLITTERS:
     if not splitter.get("enabled", True):
@@ -129,13 +127,6 @@ for splitter in SPLITTERS:
     })
 
 def open_maybe_compressed(file_path, strict=False):
-    """
-    Open file as plain text or decompressed text using magic bytes.
-    Supports: plain, gzip, bz2, xz/lzma, zip.
-    
-    If strict=True: raise ValueError on unknown formats
-    If strict=False: print warning and return None
-    """
     # Magic headers
     GZIP_MAGIC  = b"\x1f\x8b"
     BZ2_MAGIC   = b"BZh"
@@ -194,7 +185,6 @@ def make_dirs(path):
         os.makedirs(path)
 
 def match_filter(value, splitter):
-    """Check if value matches filter depending on type"""
     filters = splitter["filter"]
     if not filters or "" in filters:
         return True  # match all
@@ -246,21 +236,57 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 def main(input_dir, output_dir, processes):
+    """
+    Process log files from an input directory, split them according to the
+    enabled splitter configurations, and write matched entries into
+    structured output directories. Finally, sort each generated log file
+    numerically using the system `sort` utility.
+
+    Workflow:
+        1. Create the output directory if it does not exist.
+        2. Recursively collect all files from `input_dir`.
+        3. Use a multiprocessing pool to process files in parallel.
+        4. For each line in each file:
+           - Apply all enabled regex splitters (COMPILED_SPLITTERS).
+           - If a match is found and passes its filter:
+             - Write the line to: <output_dir>/<splitter_name>/<value>.log
+        5. After processing completes, perform an in-place numeric sort
+           (`sort -n --parallel=<cpu_count>`) on every generated .log file.
+
+    Supported input formats:
+        - Plain text
+        - gzip (.gz)
+        - bzip2 (.bz2)
+        - xz / lzma (.xz)
+        - zip archives (all contained files are streamed)
+
+    Args:
+        input_dir (str): Path to directory containing input log files.
+                         Files are discovered recursively.
+        output_dir (str): Directory where split and filtered log files
+                          will be written.
+        processes (int): Number of worker processes for parallel file
+                         processing.
+
+    Raises:
+        No exceptions are raised intentionally. Errors during file
+        processing or sorting are caught and reported as warnings.
+    """
     make_dirs(output_dir)
     files = collect_files(input_dir)
     tasks = [(f, output_dir) for f in files]
-    print("Discovered {} files. Starting pool with {} processes...".format(len(files), processes))
-    pool = Pool(processes)
+    print(f"Discovered {len(files)} files. Starting pool with {processes} processes...")
+    pool = Pool(processes)#pylint: disable=consider-using-with
     pool.map(process_file, tasks)
     pool.close()
     pool.join()
     # Get number of CPU cores for GNU sort parallel mode
     try:
         nproc = str(os.cpu_count())
-    except Exception:
+    except Exception: #pylint: disable=broad-exception-caught
         nproc = "1"
 
-    print("Sorting output files with system 'sort -n --parallel={}'...".format(nproc))
+    print(f"Sorting output files with system 'sort -n --parallel={nproc}'...")
     
     for root, _, files in os.walk(output_dir):
         for name in files:
@@ -277,8 +303,8 @@ def main(input_dir, output_dir, processes):
                     ],
                     check=True
                 )
-            except Exception as e:
-                print("Warning: could not sort {}: {}".format(path, e))
+            except Exception as e: #pylint: disable=broad-exception-caught
+                print(f"Warning: could not sort {path}: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -289,3 +315,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args.input_dir, args.output_dir, args.processes)
+
+
