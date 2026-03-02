@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import subprocess
+import fcntl
+import time
 import os
 import re
 import gzip
@@ -33,15 +35,15 @@ SPLITTERS = [
         "split_function": r'session_uid="(?P<session_uid>.*?)"',
         "filter": [""], 
         "filter_from_file": "",
-        "enabled": True,
+        "enabled": False,
         "type": "string"
     },
     {
         "name": "split_by_src",
         "split_function": r'src="(?P<src>.*?)"',
-        "filter": [""], 
-        "filter_from_file": "",  
-        "enabled": False,
+        "filter": [], 
+        "filter_from_file": "srcAll",  
+        "enabled": True,
         "type": "ip"
     },
     {
@@ -87,6 +89,29 @@ def load_filter_list(splitter):
                 splitter.get("filter_from_file", ""), splitter.get("name", ""), e))
     return filters
 
+
+def safe_append(out_path, line):
+    with open(out_path, 'a') as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            f.write(line)
+            
+        except BlockingIOError:
+            print(f"Waiting for lock...{out_path}")
+            while True:
+                try:
+                    # Wait and attempt to acquire the lock again
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                    print(f"Lock acquired after waiting, writing to file. {out_path}")
+                    f.write(line)
+                    break  # Break once we've acquired the lock
+                except BlockingIOError:
+                    # Keep waiting
+                    time.sleep(0.1)
+        
+        finally:
+            # Unlock the file after writing
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 COMPILED_SPLITTERS = []
 for splitter in SPLITTERS:
@@ -205,6 +230,7 @@ def match_filter(value, splitter):
     else:
         return value in filters
 
+
 def process_file(args):
     file_path, output_dir = args
     try:
@@ -220,9 +246,8 @@ def process_file(args):
                     if match_filter(value, splitter):
                         out_dir = os.path.join(output_dir, splitter["name"])
                         make_dirs(out_dir)
-                        out_path = os.path.join(out_dir, value + ".log")
-                        with open(out_path, 'a') as f:
-                            f.write(line)
+                        out_path = os.path.join(out_dir, value + ".log")  # Keep the filename convention
+                        safe_append(out_path, line)  # Locking ensures safe concurrent writes
         print("Processed:", file_path)
     except Exception as e:
         print("Error processing {}: {}".format(file_path, e))
@@ -315,5 +340,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args.input_dir, args.output_dir, args.processes)
+
+
 
 
