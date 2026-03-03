@@ -197,9 +197,9 @@ This project is licensed under the **MIT License** — feel free to use, modify,
 * Create a .referenced log file, with every line starting with the source file name and line 
 * If a line contains null bytes or encoding errors, they should be kept in a separate log file.
 * For reproducible results, save a run_report.txt with:
-** Environment: python version, os version and command lines arguments used.
-** Config: a copy of the splitters regex patterns
-** Stats: total lines processed, total matches, and total malformed lines.
+  - Environment: python version, os version and command lines arguments used.
+  - Config: a copy of the splitters regex patterns
+  - Stats: total lines processed, total matches, and total malformed lines.
 * Guess an ETA based on total file sizes and already processed data.
 
 ---
