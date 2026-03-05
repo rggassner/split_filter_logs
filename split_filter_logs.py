@@ -376,9 +376,11 @@ def process_file(file_args):
            independent of the input file size.
         3. Aggregates matched data into a local 'buffer' dictionary to minimize 
            system calls and lock contention on the output files.
-        4. Triggers a 'flush_buffer' operation once the aggregate buffer size 
-           reaches the 'buffer_limit' (10,000 entries).
-        5. Performs a final flush to ensure no trailing data remains in memory.
+        4. Triggers a 'flush_buffer' operation using an O(1) incremental counter 
+           once 10,000 lines have been processed, avoiding expensive dictionary 
+           summations.
+        5. Performs a final conditional flush to ensure no trailing data remains 
+           in memory.
 
     Forensic Integrity:
         - Stream-based processing ensures large logs do not cause Out-Of-Memory (OOM) 
@@ -401,26 +403,33 @@ def process_file(file_args):
     file_path, output_dir = file_args
     buffer = {}
     buffer_limit = 10000
+    current_buffer_size = 0  # <--- Optimization: Persistent counter
 
     try:
+        # Optimization: open_maybe_compressed already handles the stream
         infile = open_maybe_compressed(file_path, strict=False)
         if infile is None:
             return
 
         for line in infile:
             process_line(line, output_dir, buffer)
+            current_buffer_size += 1 # <--- Incremental count
 
-            if sum(len(lines) for lines in buffer.values()) >= buffer_limit:
+            if current_buffer_size >= buffer_limit:
                 flush_buffer(buffer)
                 buffer.clear()
+                current_buffer_size = 0 # <--- Reset counter
 
         # Final flush for remaining lines
-        flush_buffer(buffer)
-        print("Processed:", file_path)
+        if buffer:
+            flush_buffer(buffer)
+            
+        print(f"Processed: {file_path}")
+
     except FileNotFoundError as e:
         print(f"File not found: {file_path}. Error: {e}")
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Unexpected error processing {file_path}: {e}")
+    except Exception as e:
+        print(f"Unexpected error processing {file_path}: {e}")    
 
 
 def process_line(line, output_dir, buffer):
@@ -613,5 +622,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args.input_dir, args.output_dir, args.processes)
-
-
