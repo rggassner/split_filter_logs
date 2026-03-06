@@ -41,8 +41,11 @@ import bz2
 import lzma
 import zipfile
 import ipaddress
-from multiprocessing import Pool, cpu_count
 import argparse
+import hashlib
+import tarfile
+from datetime import datetime
+from multiprocessing import Pool, cpu_count
 
 # Example config
 SPLITTERS = [
@@ -104,6 +107,84 @@ SPLITTERS = [
     }
 ]
 
+def get_file_stats(file_path):
+    """
+    Generates a cryptographic and physical profile of a file in a single I/O pass.
+
+    This utility calculates MD5 and SHA256 hashes while simultaneously determining 
+    the file size. By updating both hash objects within the same read loop, the 
+    function minimizes disk head movement and system call overhead, which is 
+    critical when auditing large volumes of forensic evidence.
+
+    Forensic Standards:
+        - Multi-Algorithm Verification: Provides both MD5 (for legacy systems) 
+          and SHA256 (for modern collision resistance) to ensure robust 
+          integrity verification.
+        - Memory Efficiency: Processes files in 64KB (65,536 byte) chunks. This 
+          ensures that even multi-gigabyte log files can be hashed without 
+          exhausting system RAM.
+        - Binary Integrity: Opens files in 'rb' (read-binary) mode to ensure 
+          that the raw byte stream is hashed exactly as it exists on disk, 
+          unaffected by text encoding or newline translations.
+
+    Args:
+        file_path (str): The absolute or relative path to the file to be audited.
+
+    Returns:
+        dict: A dictionary containing the file's metadata:
+            - "md5" (str): The hex-encoded MD5 message digest.
+            - "sha256" (str): The hex-encoded SHA256 message digest.
+            - "size" (int): The total size of the file in bytes.
+
+    Note:
+        The use of 'iter(lambda: fst.read(65536), b"")' is a Pythonic idiom for 
+        efficiently streaming binary data until EOF (End Of File) is reached.
+    """
+    md5_hash = hashlib.md5()
+    sha256_hash = hashlib.sha256()
+    size = os.path.getsize(file_path)
+
+    with open(file_path, "rb") as fst:
+        # Read in 64kb chunks to stay memory-efficient
+        for byte_block in iter(lambda: fst.read(65536), b""):
+            md5_hash.update(byte_block)
+            sha256_hash.update(byte_block)
+
+    return {
+        "md5": md5_hash.hexdigest(),
+        "sha256": sha256_hash.hexdigest(),
+        "size": size
+    }
+
+def reset_metadata(tarinfo):
+    """
+    Normalizes file metadata to ensure deterministic and reproducible archive hashes.
+
+    By default, TAR archives include system-specific metadata such as User IDs (UID), 
+    Group IDs (GID), and last-modification timestamps (mtime). This causes the 
+    final archive hash to change between runs even if the log data is identical. 
+    This function intercepts the archiving process to strip these variables.
+
+    Forensic Impact:
+        - Reproducibility: Allows different investigators on different systems 
+          to verify the data and arrive at the same SHA256/MD5 archive hash.
+        - Privacy: Prevents the leakage of local system information (like 
+          usernames or UID/GID schemes) into the forensic evidence package.
+        - Timestamp Consistency: Sets 'mtime' to the Unix Epoch (0), removing 
+          temporal "drift" from the archive headers.
+
+    Args:
+        tarinfo (tarfile.TarInfo): The metadata object for the file currently 
+                                   being added to the archive.
+
+    Returns:
+        tarfile.TarInfo: The modified metadata object with normalized 
+                         ownership and timestamp fields.
+    """
+    tarinfo.uid = tarinfo.gid = 0
+    tarinfo.uname = tarinfo.gname = "root"
+    tarinfo.mtime = 0
+    return tarinfo
 
 def load_filter_list(l_splitter):
     """
@@ -423,13 +504,13 @@ def process_file(file_args):
         # Final flush for remaining lines
         if buffer:
             flush_buffer(buffer)
-            
+
         print(f"Processed: {file_path}")
 
     except FileNotFoundError as e:
         print(f"File not found: {file_path}. Error: {e}")
-    except Exception as e:
-        print(f"Unexpected error processing {file_path}: {e}")    
+    except Exception as e: #pylint: disable=broad-exception-caught
+        print(f"Unexpected error processing {file_path}: {e}")
 
 
 def process_line(line, output_dir, buffer):
@@ -542,76 +623,117 @@ def collect_files(input_dir):
             file_list.append(os.path.join(root, name))
     return sorted(file_list)
 
-def main(input_dir, output_dir, processes):
+
+def main(input_dir, output_dir, processes): #pylint: disable=too-many-locals
     """
-    Process log files from an input directory, split them according to the
-    enabled splitter configurations, and write matched entries into
-    structured output directories. Finally, sort each generated log file
-    numerically using the system `sort` utility.
+    Executes the end-to-end forensic log processing pipeline: ingestion, 
+    categorization, normalization, and secure archival.
 
-    Workflow:
-        1. Create the output directory if it does not exist.
-        2. Recursively collect all files from `input_dir`.
-        3. Use a multiprocessing pool to process files in parallel.
-        4. For each line in each file:
-           - Apply all enabled regex splitters (COMPILED_SPLITTERS).
-           - If a match is found and passes its filter:
-             - Write the line to: <output_dir>/<splitter_name>/<value>.log
-        5. After processing completes, perform an in-place numeric sort
-           (`sort -n --parallel=<cpu_count>`) on every generated .log file.
+    This function manages the full lifecycle of a forensic extraction, ensuring
+    chain-of-custody integrity by hashing all inputs and outputs and generating
+    a comprehensive audit digest.
 
-    Supported input formats:
-        - Plain text
-        - gzip (.gz)
-        - bzip2 (.bz2)
-        - xz / lzma (.xz)
-        - zip archives (all contained files are streamed)
+    Forensic Workflow:
+        1. Pre-Processing Audit: Discovers all input files and calculates 
+           SHA256/MD5 hashes and file sizes before any modification.
+        2. Parallel Extraction: Distributes log processing across a 
+           multiprocessing pool to split data into categorized subdirectories.
+        3. Data Normalization: Performs a high-performance, parallelized 
+           numeric sort on all generated output logs using the system 'sort' 
+           utility to ensure chronological consistency.
+        4. Post-Processing Audit: Recursively hashes all resulting output 
+           files for the final report.
+        5. Secure Archival: Tars and compresses the output directory into 
+           an '.xz' archive using the LZMA2 'Extreme' preset (equivalent 
+           to xz -ze9).
+        6. Digest Generation: Produces a final text-based manifest outside 
+           the output directory containing start times, input hashes, 
+           output hashes, and the final compressed archive's signature.
+
+    Supported Input Formats:
+        - Transparent streaming of GZIP, BZIP2, XZ, and ZIP archives 
+          (detected via magic bytes).
 
     Args:
-        input_dir (str): Path to directory containing input log files.
-                         Files are discovered recursively.
-        output_dir (str): Directory where split and filtered log files
-                          will be written.
-        processes (int): Number of worker processes for parallel file
-                         processing.
+        input_dir (str): Root directory containing source log files.
+        output_dir (str): Destination for the structured log hierarchy.
+        processes (int): Number of worker processes to spawn for 
+                         parallelized file processing.
 
-    Raises:
-        No exceptions are raised intentionally. Errors during file
-        processing or sorting are caught and reported as warnings.
+    Returns:
+        None: All status updates and processing metrics are printed to stdout; 
+              a manifest is persisted to '<output_dir>_digest.txt'.
+
+    Note:
+        The pipeline assumes the presence of a GNU-compatible 'sort' utility 
+        in the system PATH for the normalization phase.
     """
+    start_time = datetime.now()
+    digest_lines = [f"Processing Start Time: {start_time}\n", "--- INPUT FILES ---\n"]
+
     make_dirs(output_dir)
     files = collect_files(input_dir)
+
+    # Hash Input Files
+    print(f"Hashing {len(files)} input files...")
+    for fi in files:
+        stats = get_file_stats(fi)
+        digest_lines.append(f"{fi} | Size: {stats['size']} |"
+                            f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
+
+    # --- Processing Phase ---
     tasks = [(f, output_dir) for f in files]
-    print(f"Discovered {len(files)} files. Starting pool with {processes} processes...")
-    pool = Pool(processes)#pylint: disable=consider-using-with
+    pool = Pool(processes) #pylint: disable=consider-using-with
     pool.map(process_file, tasks, chunksize=1)
     pool.close()
     pool.join()
-    # Get number of CPU cores for GNU sort parallel mode
+
+    # --- Sorting Phase ---
     try:
         nproc = str(os.cpu_count())
-    except Exception: #pylint: disable=broad-exception-caught
+    except Exception:#pylint: disable=broad-exception-caught
         nproc = "1"
 
-    print(f"Sorting output files with system 'sort -n --parallel={nproc}'...")
+    log_files = []
+    for root, _, walk_files in os.walk(output_dir):
+        for name in walk_files:
+            if name.endswith(".log"):
+                log_files.append(os.path.join(root, name))
 
-    for root, _, files in os.walk(output_dir):
-        for name in files:
-            if not name.endswith(".log"):
-                continue
-            path = os.path.join(root, name)
-            try:
-                subprocess.run(
-                    [
-                        "sort",
-                        "-n",                 # numeric sort by first field
-                        "--parallel=" + nproc,
-                        "-o", path, path      # in-place external merge sort
-                    ],
-                    check=True
-                )
-            except Exception as e: #pylint: disable=broad-exception-caught
-                print(f"Warning: could not sort {path}: {e}")
+    print(f"Sorting and hashing {len(log_files)} output files...")
+    digest_lines.append("\n--- OUTPUT FILES ---\n")
+
+    for path in sorted(log_files):
+        try:
+            subprocess.run(["sort", "-n", "--parallel=" + nproc, "-o", path, path], check=True)
+            stats = get_file_stats(path)
+            digest_lines.append(f"{path} | Size: {stats['size']} |"
+                                f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
+        except Exception as e:#pylint: disable=broad-exception-caught
+            print(f"Warning: could not process {path}: {e}")
+
+    # --- Archiving Phase ---
+    tar_filename = f"{os.path.normpath(output_dir)}.tar.xz"
+    print(f"Creating compressed archive: {tar_filename}...")
+    with tarfile.open(tar_filename, "w:xz", preset=9) as tar:
+        tar.add(output_dir, arcname="output", filter=reset_metadata)
+
+    # --- Capture Finish Time ---
+    finish_time = datetime.now()
+    duration = finish_time - start_time
+
+    # --- Final Digest Update ---
+    archive_stats = get_file_stats(tar_filename)
+    digest_lines.append("\n--- FINAL SUMMARY ---\n")
+    digest_lines.append(f"Processing Finish Time: {finish_time}\n")
+    digest_lines.append(f"Total Execution Duration: {duration}\n")
+    digest_lines.append(f"Archive: {tar_filename} | Size: {archive_stats['size']} |"
+                        f" MD5: {archive_stats['md5']} | SHA256: {archive_stats['sha256']}\n")
+    digest_path = f"{output_dir}_digest.txt"
+    with open(digest_path, "w", encoding="utf-8") as df:
+        df.writelines(digest_lines)
+    print(f"Digest generated: {digest_path}")
+    print(f"Processing complete in {datetime.now() - start_time}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
