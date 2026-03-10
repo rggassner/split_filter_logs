@@ -197,8 +197,9 @@ This project is licensed under the **MIT License** — feel free to use, modify,
   - Environment: python version, os version and command lines arguments used.
   - Config: a copy of the splitters regex patterns
   - Stats: total lines processed, total matches, and total malformed lines.
-* Guess an ETA based on total file sizes and already processed data.
-
+* Date intervals
+* Interactive menu
+  
 ---
 
 
