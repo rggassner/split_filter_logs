@@ -44,7 +44,7 @@ import ipaddress
 import argparse
 import hashlib
 import tarfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from multiprocessing import Pool, cpu_count
 
 # Example config
@@ -77,7 +77,7 @@ SPLITTERS = [
         "name": "split_by_src",
         "split_function": r'src="(?P<src>.*?)"',
         "filter": [], 
-        "filter_from_file": "srcAll",  
+        "filter_from_file": "",  
         "enabled": True,
         "type": "ip"
     },
@@ -104,8 +104,50 @@ SPLITTERS = [
         "filter_from_file": "",
         "enabled": False,
         "type": "string"
+    },
+    {
+        "name": "split_by_office_mode_ip",
+        "split_function": r'office_mode_ip="(?P<officemodeip>.*?)"',
+        "filter": [],
+        "filter_from_file": "officeModeIp",
+        "enabled": True,
+        "type": "ip"
     }
 ]
+
+def hash_worker(file_path):
+    """
+    Executes a parallelized cryptographic audit and metadata capture for a single file.
+
+    This function serves as the primary worker for the pre-processing phase. By 
+    distributing the 'get_file_stats' operation across multiple CPU cores, it 
+    drastically reduces the time required to establish a forensic baseline of 
+    the input data compared to serial execution.
+
+    Workflow:
+        1. Integrity Verification: Invokes the multi-algorithm hashing engine 
+           (MD5 and SHA256) to ensure bit-level authenticity.
+        2. Volume Calculation: Captures the physical file size to provide 
+           the denominator for the extraction phase's progress metric.
+        3. Reporting: Returns the original path and the resulting metadata 
+           dictionary to the parent process for inclusion in the master digest.
+
+    Args:
+        file_path (str): The absolute or relative path to the source file 
+                         being audited.
+
+    Returns:
+        tuple: A pair containing:
+            - file_path (str): The source path for identification in the main loop.
+            - stats (dict): A dictionary containing 'md5', 'sha256', and 'size'.
+
+    Note:
+        Running this in parallel is I/O intensive. On systems with traditional 
+        HDDs, high process counts may cause disk contention; on NVMe-based 
+        systems, this phase will scale linearly with CPU core availability.
+    """
+    stats = get_file_stats(file_path)
+    return file_path, stats
 
 def get_file_stats(file_path):
     """
@@ -441,6 +483,38 @@ def match_filter(value, f_splitter):
         return False
     return value in filters
 
+def process_file_with_size(file_args):
+    """
+    Acts as a high-level wrapper for parallel file processing to track real-time progress.
+
+    This function serves as the entry point for workers in the multiprocessing pool 
+    during the extraction phase. It captures the physical byte-size of the target 
+    file before passing it to the core processing logic. This allows the parent 
+    process to increment the global 'processed_bytes' counter accurately, which 
+    is the primary variable for calculating the remaining ETA.
+
+    Workflow:
+        1. Metadata Capture: Retrieves the file size via 'os.path.getsize' to 
+           ensure the progress bar moves relative to the actual data volume 
+           rather than just the file count.
+        2. Execution: Delegates the actual decompression and regex filtering 
+           to the 'process_file' function.
+        3. Reporting: Returns the file path and its size to the 'imap_unordered' 
+           iterator in the main process.
+
+    Args:
+        file_args (tuple): A pair containing:
+            - file_path (str): The absolute or relative path to the log file.
+            - output_dir (str): The destination directory for split logs.
+
+    Returns:
+        tuple: A pair containing (file_path, file_size), used by the main 
+               loop to update the progress percentage and time estimation.
+    """
+    file_path, _ = file_args
+    file_size = os.path.getsize(file_path)
+    process_file(file_args)
+    return file_path, file_size
 
 def process_file(file_args):
     """
@@ -624,7 +698,7 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 
-def main(input_dir, output_dir, processes): #pylint: disable=too-many-locals
+def main(input_dir, output_dir, processes): #pylint: disable=too-many-locals, too-many-statements
     """
     Executes the end-to-end forensic log processing pipeline: ingestion, 
     categorization, normalization, and secure archival.
@@ -670,24 +744,55 @@ def main(input_dir, output_dir, processes): #pylint: disable=too-many-locals
     """
     start_time = datetime.now()
     digest_lines = [f"Processing Start Time: {start_time}\n", "--- INPUT FILES ---\n"]
-
     make_dirs(output_dir)
     files = collect_files(input_dir)
+    num_files = len(files)
+    # --- Phase 1: Parallel Hashing ---
+    print(f"Phase 1/2: Hashing {num_files} input files on {processes} cores...")
+    hash_start = datetime.now()
+    total_bytes = 0
+    hashed_count = 0
+    # We use a Pool context manager for Phase 1
+    with Pool(processes) as pool:
+        for fi, stats in pool.imap_unordered(hash_worker, files):
+            hashed_count += 1
+            total_bytes += stats['size']
+            # Record in digest
+            digest_lines.append(f"{fi} | Size: {stats['size']} |"
+                                f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
+            # Calculate Hashing ETA
+            elapsed = (datetime.now() - hash_start).total_seconds()
+            percent = (hashed_count / num_files) * 100
+            if elapsed > 1:
+                files_per_sec = hashed_count / elapsed
+                remaining_files = num_files - hashed_count
+                eta_sec = remaining_files / files_per_sec
+                eta_str = str(timedelta(seconds=int(eta_sec)))
+                print(f"[HASHING: {percent:6.2f}%] Files: {hashed_count}/{num_files} |"
+                      f"ETA: {eta_str}      ", end='\r')
 
-    # Hash Input Files
-    print(f"Hashing {len(files)} input files...")
-    for fi in files:
-        stats = get_file_stats(fi)
-        digest_lines.append(f"{fi} | Size: {stats['size']} |"
-                            f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
+    print(f"\nHashing complete. Total Data: {total_bytes / (1024**3):.2f} GB\n")
 
-    # --- Processing Phase ---
+    # --- Phase 2: Parallel Extraction & Filtering ---
+    processed_bytes = 0
+    processing_start = datetime.now()
     tasks = [(f, output_dir) for f in files]
-    pool = Pool(processes) #pylint: disable=consider-using-with
-    pool.map(process_file, tasks, chunksize=1)
-    pool.close()
-    pool.join()
-
+    print("Phase 2/2: Starting extraction and filtering...")
+    with Pool(processes) as pool:
+        for file_path, file_size in pool.imap_unordered(process_file_with_size, tasks):
+            processed_bytes += file_size
+            # Calculate Extraction ETA
+            elapsed = (datetime.now() - processing_start).total_seconds()
+            percent = (processed_bytes / total_bytes) * 100 if total_bytes > 0 else 100
+            if elapsed > 1 and processed_bytes > 0:
+                bytes_per_sec = processed_bytes / elapsed
+                remaining_bytes = total_bytes - processed_bytes
+                eta_seconds = remaining_bytes / bytes_per_sec
+                eta_str = str(timedelta(seconds=int(eta_seconds)))
+                raw_name = os.path.basename(file_path)
+                fname = os.path.basename(file_path)[-40:] if len(raw_name) > 40 else raw_name
+                print(f"[FILTERING: {percent:6.2f}%] {fname:<40} | ETA: {eta_str:<20}", end='\r')
+    print("\nExtraction phase complete.\n")
     # --- Sorting Phase ---
     try:
         nproc = str(os.cpu_count())
