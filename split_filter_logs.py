@@ -36,6 +36,7 @@ import subprocess
 import fcntl
 import os
 import re
+import sys
 import gzip
 import bz2
 import lzma
@@ -50,9 +51,18 @@ from multiprocessing import Pool, cpu_count
 # Example config
 SPLITTERS = [
     {
+        #When a splitter is defined with the type 'global_string', this logic bypasses 
+        #traditional field-specific extraction. Instead, it aggregates all provided 
+        #keywords into a single, optimized Regular Expression (RE).
+        "name": "global_string",
+        "split_function": "", 
+        "filter_from_file": "global.txt", 
+        "enabled": True,
+        "type": "global_string"
+    },
+    {
         "name": "split_by_user",
         "split_function": r'user="(?:.*?\()?(?P<username>[a-zA-Z0-9._-]+)\s*(?:\))?"',
-        "filter": [""], 
         "filter_from_file": "",
         "enabled": False,
         "type": "string"
@@ -60,7 +70,6 @@ SPLITTERS = [
     {
         "name": "split_by_user_dn",
         "split_function": r'user_dn="(?P<user_dn>.*?)"',
-        "filter": [""], 
         "filter_from_file": "",
         "enabled": False,
         "type": "string"
@@ -68,7 +77,6 @@ SPLITTERS = [
     {
         "name": "split_by_session_uid",
         "split_function": r'session_uid="(?P<session_uid>.*?)"',
-        "filter": [""], 
         "filter_from_file": "",
         "enabled": False,
         "type": "string"
@@ -76,15 +84,13 @@ SPLITTERS = [
     {
         "name": "split_by_src",
         "split_function": r'src="(?P<src>.*?)"',
-        "filter": [], 
         "filter_from_file": "",  
-        "enabled": True,
+        "enabled": False,
         "type": "ip"
     },
     {
         "name": "split_by_dst",
         "split_function": r'dst="(?P<dst>.*?)"',
-        "filter": [""],
         "filter_from_file": "",
         "enabled": False,
         "type": "ip"
@@ -92,7 +98,6 @@ SPLITTERS = [
     {
         "name": "split_by_status",
         "split_function": r'status="(?P<status>.*?)"',
-        "filter": ["Success"],
         "filter_from_file": "",
         "enabled": False,
         "type": "string"
@@ -100,7 +105,6 @@ SPLITTERS = [
     {
         "name": "split_by_client_name",
         "split_function": r'client_name="(?P<clientname>.*?)"',
-        "filter": [""],
         "filter_from_file": "",
         "enabled": False,
         "type": "string"
@@ -108,10 +112,16 @@ SPLITTERS = [
     {
         "name": "split_by_office_mode_ip",
         "split_function": r'office_mode_ip="(?P<officemodeip>.*?)"',
-        "filter": [],
-        "filter_from_file": "officeModeIp",
-        "enabled": True,
+        "filter_from_file": "",
+        "enabled": False,
         "type": "ip"
+    },
+    {
+        "name": "split_by_service",
+        "split_function": r'service="(?P<service>.*?)"',
+        "filter_from_file": "services.txt",
+        "enabled": False,
+        "type": "string"
     }
 ]
 
@@ -281,31 +291,53 @@ COMPILED_SPLITTERS = []
 for splitter in SPLITTERS:
     if not splitter.get("enabled", True):
         continue
-    pattern = re.compile(splitter["split_function"])
-    match = re.search(r'\?P<(\w+)>', splitter["split_function"])
-    group = match.group(1) if match else None
 
-    # Get filter list (inline or from file)
+    # --- STRICT FILTER FILE CHECK ---
+    filter_file = splitter.get("filter_from_file")
+    if filter_file:
+        if not os.path.exists(filter_file):
+            print(f"\n[!] FATAL ERROR: Filter file '{filter_file}' not found!")
+            print(f"Required by splitter: {splitter.get('name')}")
+            print("Aborting to prevent incomplete processing.")
+            sys.exit(1) # Kill the script immediately
+
     raw_filters = load_filter_list(splitter)
+    
+    if splitter.get("type") == "global_string":
+        if not raw_filters:
+            continue
+            
+        escaped_keywords = [re.escape(f) for f in raw_filters if f]
+        combined_regex = rf'.*(?P<{splitter["name"]}>' + "|".join(escaped_keywords) + r').*'
+        
+        # --- FLAG ADDED HERE ---
+        pattern = re.compile(combined_regex, re.IGNORECASE) 
+        group = splitter["name"]
+    else:
+        # --- FLAG ADDED HERE AS WELL ---
+        pattern = re.compile(splitter["split_function"], re.IGNORECASE)
+        match = re.search(r'\?P<(\w+)>', splitter["split_function"])
+        group = match.group(1) if match else None
 
-    # Prepare filter by type
+
+    # 3. Prepare filter by type
     ftype = splitter.get("type", "string")
     if ftype == "ip":
         ip_filters = []
         for f in raw_filters:
             if not f or f.strip() == "":
-                ip_filters.append("")  # match all
+                ip_filters.append("") 
                 continue
             try:
-                if "/" in f:
-                    ip_filters.append(ipaddress.ip_network(f, strict=False))
-                else:
-                    ip_filters.append(ipaddress.ip_address(f))
+                ip_filters.append(ipaddress.ip_network(f, strict=False) if "/" in f else ipaddress.ip_address(f))
             except ValueError:
-                print(f"Warning: invalid IP/network in filter for {splitter.get('name', '')}: {f}")
+                print(f"Warning: invalid IP filter: {f}")
         filter_set = ip_filters
     else:
-        filter_set = set(raw_filters)
+        # For global_string, we don't need a separate filter set because 
+        # the Regex itself IS the filter.
+        # filter_set = set(raw_filters)
+        filter_set = {f.lower() for f in raw_filters if f}
 
     COMPILED_SPLITTERS.append({
         "name": splitter["name"],
@@ -465,8 +497,12 @@ def match_filter(value, f_splitter):
         with standard string comparison.
     """
     filters = f_splitter["filter"]
+
+    if f_splitter["type"] == "global_string":
+        return True
+
     if not filters or "" in filters:
-        return True  # match all
+        return True  
 
     if f_splitter["type"] == "ip":
         try:
@@ -481,7 +517,8 @@ def match_filter(value, f_splitter):
                 if ip_val in fi:
                     return True
         return False
-    return value in filters
+    else: 
+        return value.lower() in filters
 
 def process_file_with_size(file_args):
     """
@@ -621,24 +658,27 @@ def process_line(line, output_dir, buffer):
     for splitter_line in COMPILED_SPLITTERS:
         match_line = splitter_line["regex"].search(line)
         if not match_line:
-            continue  # Skip if no match
+            continue 
 
-        # Check if a specific regex group name was defined (e.g., "username" or "src")
         if splitter_line["group"]:
-            # Extract only the data within that specific (?P<name>...) group
             value = match_line.group(splitter_line["group"])
         else:
-            # If no group was defined, take the entire string that matched the regex
             value = match_line.group(0)
+
+        if splitter_line["type"] in ["string", "global_string"]:
+            target_filename = value.lower()
+        else:
+            target_filename = value
+
         if not match_filter(value, splitter_line):
-            continue  # Skip if the match doesn't pass the filter
+            continue 
 
         out_dir = os.path.join(output_dir, splitter_line["name"])
-        out_path = os.path.join(out_dir, value + ".log")
+        out_path = os.path.join(out_dir, f"{target_filename}.log")
 
         if out_path not in buffer:
             buffer[out_path] = []
-        buffer[out_path].append(line)
+        buffer[out_path].append(line)    
 
 def flush_buffer(buffer):
     """
