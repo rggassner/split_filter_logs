@@ -56,7 +56,7 @@ SPLITTERS = [
         #keywords into a single, optimized Regular Expression (RE).
         "name": "global_string",
         "split_function": "", 
-        "filter_from_file": "global.txt", 
+        "filter_from_file": "ids.txt", 
         "enabled": True,
         "type": "global_string"
     },
@@ -124,6 +124,60 @@ SPLITTERS = [
         "type": "string"
     }
 ]
+
+def get_compiled_splitters(ignore_case):
+    compiled_list = []
+    flags = re.IGNORECASE if ignore_case else 0
+
+    for splitter in SPLITTERS:
+        if not splitter.get("enabled", True):
+            continue
+
+        filter_file = splitter.get("filter_from_file")
+        if filter_file and not os.path.exists(filter_file):
+            print(f"\n[!] FATAL ERROR: Filter file '{filter_file}' not found!")
+            sys.exit(1)
+
+        raw_filters = load_filter_list(splitter)
+        ftype = splitter.get("type", "string")
+
+        if ftype == "global_string":
+            if not raw_filters:
+                continue
+            escaped_keywords = [re.escape(f) for f in raw_filters if f]
+            combined_regex = rf'.*(?P<{splitter["name"]}>' + "|".join(escaped_keywords) + r').*'
+            pattern = re.compile(combined_regex, flags)
+            group = splitter["name"]
+        else:
+            pattern = re.compile(splitter["split_function"], flags)
+            match = re.search(r'\?P<(\w+)>', splitter["split_function"])
+            group = match.group(1) if match else None
+
+        # Prepare filter set
+        if ftype == "ip":
+            filter_set = []
+            for f in raw_filters:
+                if not f: continue
+                try:
+                    filter_set.append(ipaddress.ip_network(f, strict=False) if "/" in f else ipaddress.ip_address(f))
+                except ValueError:
+                    print(f"Warning: invalid IP filter: {f}")
+        else:
+            # If ignore_case is True, we normalize the set to lowercase
+            if ignore_case:
+                filter_set = {f.lower() for f in raw_filters if f}
+            else:
+                filter_set = {f for f in raw_filters if f}
+
+        compiled_list.append({
+            "name": splitter["name"],
+            "regex": pattern,
+            "filter": filter_set,
+            "group": group,
+            "type": ftype,
+            "ignore_case": ignore_case # Store preference for match_filter
+        })
+    return compiled_list
 
 def hash_worker(file_path):
     """
@@ -462,63 +516,23 @@ def make_dirs(path):
         os.makedirs(path)
 
 def match_filter(value, f_splitter):
-    """
-    Evaluates an extracted value against a defined set of inclusion criteria.
-
-    This function acts as a conditional filter for log splitting. It supports 
-    both literal string matching and advanced network logic for IP addresses. 
-    In forensic workflows, this allows investigators to narrow focus to specific 
-    indicators of compromise (IOCs) or known subnets without losing data 
-    integrity for non-targeted entries.
-
-    Filtering Logic:
-        1. Universal Match: If the filter list is empty or contains an 
-           empty string (""), the function returns True for all inputs.
-        2. IP/Network Logic: If the splitter type is 'ip', the function 
-           validates the 'value' as a legitimate IPv4/IPv6 address and 
-           checks for membership within a specific IP or a CIDR subnet 
-           (e.g., 192.168.1.0/24).
-        3. String Logic: For all other types, it performs a high-speed 
-           membership check within a pre-compiled set of strings.
-
-    Args:
-        value (str): The raw string extracted from the log line (e.g., 
-            a username, session ID, or IP address).
-        f_splitter (dict): The compiled splitter configuration containing:
-            - "filter": A set of strings or a list of ipaddress objects.
-            - "type": The data category (e.g., "ip" or "string").
-
-    Returns:
-        bool: True if the value satisfies the filter criteria, False otherwise.
-
-    Note:
-        The use of 'ipaddress' objects ensures that '192.168.1.1' will 
-        correctly match a filter for '192.168.1.0/24', a feat impossible 
-        with standard string comparison.
-    """
     filters = f_splitter["filter"]
-
-    if f_splitter["type"] == "global_string":
+    if f_splitter["type"] == "global_string" or not filters:
         return True
-
-    if not filters or "" in filters:
-        return True  
 
     if f_splitter["type"] == "ip":
         try:
             ip_val = ipaddress.ip_address(value)
-        except ValueError:
-            return False
-        for fi in filters:
-            if isinstance(fi, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
-                if ip_val == fi:
+            for fi in filters:
+                if (isinstance(fi, (ipaddress.IPv4Address, ipaddress.IPv6Address)) and ip_val == fi) or \
+                   (isinstance(fi, (ipaddress.IPv4Network, ipaddress.IPv6Network)) and ip_val in fi):
                     return True
-            elif isinstance(fi, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
-                if ip_val in fi:
-                    return True
+        except ValueError: pass
         return False
-    else: 
-        return value.lower() in filters
+    
+    # Check against set (case-sensitive or insensitive based on config)
+    match_val = value.lower() if f_splitter["ignore_case"] else value
+    return match_val in filters
 
 def process_file_with_size(file_args):
     """
@@ -625,50 +639,19 @@ def process_file(file_args):
 
 
 def process_line(line, output_dir, buffer):
-    """
-    Evaluates a single log entry against all active splitters and buffers matches.
-
-    This function iterates through the global `COMPILED_SPLITTERS`. For each 
-    splitter, it attempts to extract a value based on the defined regex 
-    named group. If a match is found and satisfies the associated filter 
-    criteria, the line is staged in a local memory buffer mapped to the 
-    calculated output file path.
-
-    Forensic Considerations:
-        - Multi-matching: A single line can be matched by multiple splitters 
-          and will be buffered for all of them, ensuring no overlapping 
-          data categories are missed.
-        - Memory Staging: Data is not written immediately to disk; it is 
-          held in the `buffer` dictionary to minimize I/O overhead and 
-          file lock contention.
-
-    Args:
-        line (str): The raw text line/entry extracted from the source log.
-        output_dir (str): The base directory where splitter-specific 
-            subdirectories are located.
-        buffer (dict): A mutable dictionary used to accumulate lines. 
-            Keyed by absolute output file path (str), with values being 
-            lists of log lines (list of str).
-
-    Note:
-        This function does not handle file I/O or locking; it is purely 
-        responsible for logic and memory-mapping. Disk persistence is 
-        deferred to the `flush_buffer` function.
-    """
     for splitter_line in COMPILED_SPLITTERS:
         match_line = splitter_line["regex"].search(line)
         if not match_line:
             continue 
 
-        if splitter_line["group"]:
-            value = match_line.group(splitter_line["group"])
-        else:
-            value = match_line.group(0)
+        value = match_line.group(splitter_line["group"]) if splitter_line["group"] else match_line.group(0)
 
-        if splitter_line["type"] in ["string", "global_string"]:
+        # Normalize filename only if ignore_case is active
+        if splitter_line["type"] in ["string", "global_string"] and splitter_line["ignore_case"]:
             target_filename = value.lower()
         else:
-            target_filename = value
+            # Sanitize filename (as discussed previously) to prevent OS errors with encoded strings
+            target_filename = re.sub(r'[?=\s]+', '_', value).strip('_')
 
         if not match_filter(value, splitter_line):
             continue 
@@ -678,7 +661,7 @@ def process_line(line, output_dir, buffer):
 
         if out_path not in buffer:
             buffer[out_path] = []
-        buffer[out_path].append(line)    
+        buffer[out_path].append(line)
 
 def flush_buffer(buffer):
     """
@@ -738,50 +721,9 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 
-def main(input_dir, output_dir, processes): #pylint: disable=too-many-locals, too-many-statements
-    """
-    Executes the end-to-end forensic log processing pipeline: ingestion, 
-    categorization, normalization, and secure archival.
-
-    This function manages the full lifecycle of a forensic extraction, ensuring
-    chain-of-custody integrity by hashing all inputs and outputs and generating
-    a comprehensive audit digest.
-
-    Forensic Workflow:
-        1. Pre-Processing Audit: Discovers all input files and calculates 
-           SHA256/MD5 hashes and file sizes before any modification.
-        2. Parallel Extraction: Distributes log processing across a 
-           multiprocessing pool to split data into categorized subdirectories.
-        3. Data Normalization: Performs a high-performance, parallelized 
-           numeric sort on all generated output logs using the system 'sort' 
-           utility to ensure chronological consistency.
-        4. Post-Processing Audit: Recursively hashes all resulting output 
-           files for the final report.
-        5. Secure Archival: Tars and compresses the output directory into 
-           an '.xz' archive using the LZMA2 'Extreme' preset (equivalent 
-           to xz -ze9).
-        6. Digest Generation: Produces a final text-based manifest outside 
-           the output directory containing start times, input hashes, 
-           output hashes, and the final compressed archive's signature.
-
-    Supported Input Formats:
-        - Transparent streaming of GZIP, BZIP2, XZ, and ZIP archives 
-          (detected via magic bytes).
-
-    Args:
-        input_dir (str): Root directory containing source log files.
-        output_dir (str): Destination for the structured log hierarchy.
-        processes (int): Number of worker processes to spawn for 
-                         parallelized file processing.
-
-    Returns:
-        None: All status updates and processing metrics are printed to stdout; 
-              a manifest is persisted to '<output_dir>_digest.txt'.
-
-    Note:
-        The pipeline assumes the presence of a GNU-compatible 'sort' utility 
-        in the system PATH for the normalization phase.
-    """
+def main(input_dir, output_dir, processes, ignore_case, no_sort): #pylint: disable=too-many-locals, too-many-statements
+    global COMPILED_SPLITTERS
+    COMPILED_SPLITTERS = get_compiled_splitters(ignore_case)
     start_time = datetime.now()
     digest_lines = [f"Processing Start Time: {start_time}\n", "--- INPUT FILES ---\n"]
     make_dirs(output_dir)
@@ -833,29 +775,48 @@ def main(input_dir, output_dir, processes): #pylint: disable=too-many-locals, to
                 fname = os.path.basename(file_path)[-40:] if len(raw_name) > 40 else raw_name
                 print(f"[FILTERING: {percent:6.2f}%] {fname:<40} | ETA: {eta_str:<20}", end='\r')
     print("\nExtraction phase complete.\n")
-    # --- Sorting Phase ---
-    try:
-        nproc = str(os.cpu_count())
-    except Exception:#pylint: disable=broad-exception-caught
-        nproc = "1"
 
+    # --- Phase 3: Optimized Sorting ---
     log_files = []
     for root, _, walk_files in os.walk(output_dir):
         for name in walk_files:
             if name.endswith(".log"):
                 log_files.append(os.path.join(root, name))
 
-    print(f"Sorting and hashing {len(log_files)} output files...")
+    num_logs = len(log_files)
+    if no_sort:
+        print("\n[!] --no-sort passed. Skipping chronological sorting phase.")
+        digest_lines.append("\n--- OUTPUT FILES (UNSORTED) ---\n")
+    else:
+        print(f"\nPhase 3/3: Sorting {len(log_files)} output files...")
+        digest_lines.append("\n--- OUTPUT FILES (SORTED) ---\n")
     digest_lines.append("\n--- OUTPUT FILES ---\n")
 
-    for path in sorted(log_files):
+    for i, path in enumerate(sorted(log_files), 1):
         try:
-            subprocess.run(["sort", "-n", "--parallel=" + nproc, "-o", path, path], check=True)
+            if not no_sort:
+                # 1. Detect format (ISO 2026-03-21 vs Syslog Mar 6)
+                with open(path, 'r', encoding="utf-8", errors="ignore") as f_check:
+                    first_line = f_check.readline()
+
+                # Default ISO-8601 sort
+                sort_cmd = ["sort", "--parallel=" + str(processes), "-o", path, path]
+
+                # Switch to Month-sort if needed
+                if first_line and not first_line[0].isdigit():
+                    sort_cmd = ["sort", "-M", "-k1,1", "-k2,2n", "-k3,3", "--parallel=" + str(processes), "-o", path, path]
+
+                subprocess.run(sort_cmd, check=True)
+
+                percent = (i / len(log_files)) * 100
+                print(f"[SORTING: {percent:6.2f}%] {i}/{len(log_files)} | {os.path.basename(path)[:30]:<30}", end='\r')
+
+            # We still hash the files for the digest, even if we didn't sort them
             stats = get_file_stats(path)
-            digest_lines.append(f"{path} | Size: {stats['size']} |"
-                                f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
-        except Exception as e:#pylint: disable=broad-exception-caught
-            print(f"Warning: could not process {path}: {e}")
+            digest_lines.append(f"{path} | Size: {stats['size']} | SHA256: {stats['sha256']}\n")
+
+        except Exception as e:
+            print(f"\nWarning: Error processing {path}: {e}")
 
     # --- Archiving Phase ---
     tar_filename = f"{os.path.normpath(output_dir)}.tar.xz"
@@ -886,6 +847,16 @@ if __name__ == "__main__":
     parser.add_argument("output_dir", help="Directory to store filtered logs")
     parser.add_argument("--processes", type=int, default=cpu_count(),
                         help="Number of worker processes (default: all CPUs)")
+    parser.add_argument("-i", "--ignore-case", action="store_true", help="Enable case-insensitive matching")
+    parser.add_argument("--no-sort", action="store_true",
+                        help="Skip the chronological sorting phase (saves time)")
     args = parser.parse_args()
+    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort)
+#TODO
+#Specific performance filter for smtp id
+#--no-compressed-output
+#--no-input-hashes
+#--no-output-hashes
+#--no-digest
 
-    main(args.input_dir, args.output_dir, args.processes)
+
