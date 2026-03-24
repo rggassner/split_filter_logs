@@ -38,6 +38,7 @@ import os
 import re
 import sys
 import gzip
+import json
 import bz2
 import lzma
 import zipfile
@@ -48,88 +49,89 @@ import tarfile
 from datetime import datetime, timedelta
 from multiprocessing import Pool, cpu_count
 
-# Example config
-SPLITTERS = [
-    {
-        #When a splitter is defined with the type 'global_string', this logic bypasses 
-        #traditional field-specific extraction. Instead, it aggregates all provided 
-        #keywords into a single, optimized Regular Expression (RE).
-        "name": "global_string",
-        "split_function": "", 
-        "filter_from_file": "ids.txt", 
-        "enabled": True,
-        "type": "global_string"
-    },
-    {
-        "name": "split_by_user",
-        "split_function": r'user="(?:.*?\()?(?P<username>[a-zA-Z0-9._-]+)\s*(?:\))?"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "string"
-    },
-    {
-        "name": "split_by_user_dn",
-        "split_function": r'user_dn="(?P<user_dn>.*?)"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "string"
-    },
-    {
-        "name": "split_by_session_uid",
-        "split_function": r'session_uid="(?P<session_uid>.*?)"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "string"
-    },
-    {
-        "name": "split_by_src",
-        "split_function": r'src="(?P<src>.*?)"',
-        "filter_from_file": "",  
-        "enabled": False,
-        "type": "ip"
-    },
-    {
-        "name": "split_by_dst",
-        "split_function": r'dst="(?P<dst>.*?)"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "ip"
-    },
-    {
-        "name": "split_by_status",
-        "split_function": r'status="(?P<status>.*?)"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "string"
-    },
-    {
-        "name": "split_by_client_name",
-        "split_function": r'client_name="(?P<clientname>.*?)"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "string"
-    },
-    {
-        "name": "split_by_office_mode_ip",
-        "split_function": r'office_mode_ip="(?P<officemodeip>.*?)"',
-        "filter_from_file": "",
-        "enabled": False,
-        "type": "ip"
-    },
-    {
-        "name": "split_by_service",
-        "split_function": r'service="(?P<service>.*?)"',
-        "filter_from_file": "services.txt",
-        "enabled": False,
-        "type": "string"
-    }
-]
 
-def get_compiled_splitters(ignore_case):
+SPLITTERS =[]
+
+# Example config
+#[
+#    {
+#        "name": "global_string",
+#        "split_function": "", 
+#        "filter_from_file": "ids.txt", 
+#        "enabled": true,
+#        "type": "global_string"
+#    },
+#    {
+#        "name": "split_by_user",
+#        "split_function": "user=\"(?:.*?\\()?(?P<username>[a-zA-Z0-9._-]+)\\s*(?:\\))?\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "string"
+#    },
+#    {
+#        "name": "split_by_user_dn",
+#        "split_function": "user_dn=\"(?P<user_dn>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "string"
+#    },
+#    {
+#        "name": "split_by_session_uid",
+#        "split_function": "session_uid=\"(?P<session_uid>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "string"
+#    },
+#    {
+#        "name": "split_by_src",
+#        "split_function": "src=\"(?P<src>.*?)\"",
+#        "filter_from_file": "",  
+#        "enabled": false,
+#        "type": "ip"
+#    },
+#    {
+#        "name": "split_by_dst",
+#        "split_function": "dst=\"(?P<dst>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "ip"
+#    },
+#    {
+#        "name": "split_by_status",
+#        "split_function": "status=\"(?P<status>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "string"
+#    },
+#    {
+#        "name": "split_by_client_name",
+#        "split_function": "client_name=\"(?P<clientname>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "string"
+#    },
+#    {
+#        "name": "split_by_office_mode_ip",
+#        "split_function": "office_mode_ip=\"(?P<officemodeip>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "ip"
+#    },
+#    {
+#        "name": "split_by_service",
+#        "split_function": "service=\"(?P<service>.*?)\"",
+#        "filter_from_file": "services.txt",
+#        "enabled": false,
+#        "type": "string"
+#    }
+#]
+
+
+def get_compiled_splitters(splitter_data, ignore_case):
     compiled_list = []
     flags = re.IGNORECASE if ignore_case else 0
 
-    for splitter in SPLITTERS:
+    for splitter in splitter_data:
         if not splitter.get("enabled", True):
             continue
 
@@ -721,9 +723,20 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 
-def main(input_dir, output_dir, processes, ignore_case, no_sort): #pylint: disable=too-many-locals, too-many-statements
+def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file): #pylint: disable=too-many-locals, too-many-statements
+    # 1. Load the Configuration
+    try:
+        with open(conf_file, "r", encoding="utf-8") as f:
+            splitter_data = json.load(f)
+    except Exception as e:
+        print(f"[!] FATAL: Could not load config file {conf_file}: {e}")
+        sys.exit(1)
+
     global COMPILED_SPLITTERS
-    COMPILED_SPLITTERS = get_compiled_splitters(ignore_case)
+    COMPILED_SPLITTERS = get_compiled_splitters(splitter_data, ignore_case)
+    if not COMPILED_SPLITTERS:
+        print("[!] No enabled splitters found in config. Aborting.")
+        sys.exit(1)
     start_time = datetime.now()
     digest_lines = [f"Processing Start Time: {start_time}\n", "--- INPUT FILES ---\n"]
     make_dirs(output_dir)
@@ -845,18 +858,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir", help="Directory with input log files (.gz or plain text)")
     parser.add_argument("output_dir", help="Directory to store filtered logs")
+    parser.add_argument("--conf", required=True, help="Path to the JSON configuration file")
     parser.add_argument("--processes", type=int, default=cpu_count(),
                         help="Number of worker processes (default: all CPUs)")
     parser.add_argument("-i", "--ignore-case", action="store_true", help="Enable case-insensitive matching")
     parser.add_argument("--no-sort", action="store_true",
                         help="Skip the chronological sorting phase (saves time)")
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort)
-#TODO
-#Specific performance filter for smtp id
-#--no-compressed-output
-#--no-input-hashes
-#--no-output-hashes
-#--no-digest
-
-
+    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf)
