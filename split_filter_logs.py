@@ -641,6 +641,34 @@ def process_file(file_args):
 
 
 def process_line(line, output_dir, buffer):
+    """Evaluates a single log line against all enabled splitters and buffers matches.
+
+    This function performs the core routing logic: identifying matches via regex,
+    extracting the pivot value (e.g., username, IP), sanitizing the value for 
+    filesystem compatibility, and appending the original line to a memory buffer 
+    partitioned by the target output path.
+
+    Args:
+        line (str): The raw log entry to process, typically including trailing newline.
+        output_dir (str): The base directory where splitter-specific subdirectories 
+            will be created.
+        buffer (dict): A dictionary mapping file paths (str) to lists of log 
+            lines (list). This buffer is periodically flushed to disk by the caller.
+
+    Logic Flow:
+        1. Iterates through `COMPILED_SPLITTERS`.
+        2. Extracts the `value` from the specific regex capture group or the whole match.
+        3. Normalizes `target_filename`:
+            - If `ignore_case` is True: converts to lowercase to consolidate files.
+            - Otherwise: sanitizes illegal/problematic characters (?, =, spaces) 
+              to ensure OS-level file creation doesn't fail.
+        4. Validates the extracted value against the splitter's `match_filter`.
+        5. Identifies the final `out_path` and queues the line for writing.
+
+    Note:
+        This function does not perform I/O. It populates the `buffer` to minimize 
+        frequent disk writes and context switching during high-volume processing.
+    """   
     for splitter_line in COMPILED_SPLITTERS:
         match_line = splitter_line["regex"].search(line)
         if not match_line:
