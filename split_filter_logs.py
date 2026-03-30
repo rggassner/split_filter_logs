@@ -97,6 +97,7 @@ SPLITTERS =[]
 #        "type": "ip"
 #    },
 #    {
+#        "comment": "Accept, Detect, Prevent, Drop, Reject, HTTPS Bypass, Redirect, HTTPS Inspect, Bypass, Log In, Log Out, Failed Log In, Block, Allow, Update",
 #        "name": "split_by_action",
 #        "split_function": "action=\"(?P<action>.*?)\"",
 #        "filter_from_file": "",
