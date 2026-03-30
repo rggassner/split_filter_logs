@@ -97,6 +97,13 @@ SPLITTERS =[]
 #        "type": "ip"
 #    },
 #    {
+#        "name": "split_by_action",
+#        "split_function": "action=\"(?P<action>.*?)\"",
+#        "filter_from_file": "",
+#        "enabled": false,
+#        "type": "string"
+#    },
+#    {
 #        "name": "split_by_status",
 #        "split_function": "status=\"(?P<status>.*?)\"",
 #        "filter_from_file": "",
