@@ -104,7 +104,6 @@ SPLITTERS =[]
 #        "type": "ip"
 #    },
 #    {
-#        "comment": "Accept, Detect, Prevent, Drop, Reject, HTTPS Bypass, Redirect, HTTPS Inspect, Bypass, Log In, Log Out, Failed Log In, Block, Allow, Update",
 #        "name": "split_by_status",
 #        "split_function": " status=\"(?P<status>.*?)\"",
 #        "filter_from_file": "",
@@ -759,7 +758,7 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 
-def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_hash, no_compress): #pylint: disable=too-many-locals, too-many-statements
+def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_hash, no_compress, tmp_dir, sort_mem): #pylint: disable=too-many-locals, too-many-statements
     # 1. Load the Configuration
     try:
         with open(conf_file, "r", encoding="utf-8") as f:
@@ -856,11 +855,15 @@ def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_h
                     first_line = f_check.readline()
 
                 # Default ISO-8601 sort
-                sort_cmd = ["sort", "--parallel=" + str(processes), "-o", path, path]
+                sort_cmd = ["sort", "--parallel=" + str(processes), "-S", sort_mem, "-o", path, path]
+
+                # Add Tmp Dir if provided
+                if tmp_dir:
+                    sort_cmd.extend(["-T", tmp_dir])                
 
                 # Switch to Month-sort if needed
                 if first_line and not first_line[0].isdigit():
-                    sort_cmd = ["sort", "-M", "-k1,1", "-k2,2n", "-k3,3", "--parallel=" + str(processes), "-o", path, path]
+                    sort_cmd = ["sort", "-M", "-k1,1", "-k2,2n", "-k3,3"] + sort_cmd[1:]
 
                 subprocess.run(sort_cmd, check=True)
 
@@ -925,9 +928,12 @@ if __name__ == "__main__":
                         help="Skip MD5/SHA256 calculation (saves CPU/IO)")
     parser.add_argument("--no-compress", action="store_true", default=False,
                         help="Skip final .tar.xz archiving")    
+    parser.add_argument("--tmp-dir", default=None,
+                        help="Temporary directory for sorting (default: system /tmp or output_dir)")
+    parser.add_argument("--sort-mem", default="80%",
+                    help="Memory buffer for sort, e.g., '32G' or '80%%' (default: 80%%)")    
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf, args.no_hash, args.no_compress)
+    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf, args.no_hash, args.no_compress, args.tmp_dir, args.sort_mem)
 #TODO
 #Check if digest shows input files even without hashing
 #Add --no-digest option
-#Add --tmp-dir option used in linux sorting
