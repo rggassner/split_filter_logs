@@ -927,3 +927,7 @@ if __name__ == "__main__":
                         help="Skip final .tar.xz archiving")    
     args = parser.parse_args()
     main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf, args.no_hash, args.no_compress)
+#TODO
+#Check if digest shows input files even without hashing
+#Add --no-digest option
+#Add --tmp-dir option used in linux sorting
