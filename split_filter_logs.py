@@ -58,76 +58,75 @@ SPLITTERS =[]
 #        "name": "global_string",
 #        "split_function": "", 
 #        "filter_from_file": "ids.txt", 
-#        "enabled": true,
+#        "enabled": false,
 #        "type": "global_string"
 #    },
 #    {
 #        "name": "split_by_user",
-#        "split_function": "user=\"(?:.*?\\()?(?P<username>[a-zA-Z0-9._-]+)\\s*(?:\\))?\"",
+#        "split_function": " user=\"(?:.*?\\()?(?P<username>[a-zA-Z0-9._-]+)\\s*(?:\\))?\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "string"
 #    },
 #    {
 #        "name": "split_by_user_dn",
-#        "split_function": "user_dn=\"(?P<user_dn>.*?)\"",
+#        "split_function": " user_dn=\"(?P<user_dn>.*?)\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "string"
 #    },
 #    {
 #        "name": "split_by_session_uid",
-#        "split_function": "session_uid=\"(?P<session_uid>.*?)\"",
+#        "split_function": " session_uid=\"(?P<session_uid>.*?)\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "string"
 #    },
 #    {
+#        "name": "split_by_xlatesrc",
+#        "split_function": " xlatesrc=\"(?P<xlatesrc>.*?)\"",
+#        "filter_from_file": "",  
+#        "enabled": false,
+#        "type": "ip"
+#    },
+#    {
 #        "name": "split_by_src",
-#        "split_function": "src=\"(?P<src>.*?)\"",
+#        "split_function": " src=\"(?P<src>.*?)\"",
 #        "filter_from_file": "",  
 #        "enabled": false,
 #        "type": "ip"
 #    },
 #    {
 #        "name": "split_by_dst",
-#        "split_function": "dst=\"(?P<dst>.*?)\"",
+#        "split_function": " dst=\"(?P<dst>.*?)\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "ip"
 #    },
 #    {
-#        "comment": "Accept, Detect, Prevent, Drop, Reject, HTTPS Bypass, Redirect, HTTPS Inspect, Bypass, Log In, Log Out, Failed Log In, Block, Allow, Update",
-#        "name": "split_by_action",
-#        "split_function": "action=\"(?P<action>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
 #        "name": "split_by_status",
-#        "split_function": "status=\"(?P<status>.*?)\"",
+#        "split_function": " status=\"(?P<status>.*?)\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "string"
 #    },
 #    {
 #        "name": "split_by_client_name",
-#        "split_function": "client_name=\"(?P<clientname>.*?)\"",
+#        "split_function": " client_name=\"(?P<clientname>.*?)\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "string"
 #    },
 #    {
 #        "name": "split_by_office_mode_ip",
-#        "split_function": "office_mode_ip=\"(?P<officemodeip>.*?)\"",
+#        "split_function": " office_mode_ip=\"(?P<officemodeip>.*?)\"",
 #        "filter_from_file": "",
 #        "enabled": false,
 #        "type": "ip"
 #    },
 #    {
 #        "name": "split_by_service",
-#        "split_function": "service=\"(?P<service>.*?)\"",
+#        "split_function": " service=\"(?P<service>.*?)\"",
 #        "filter_from_file": "services.txt",
 #        "enabled": false,
 #        "type": "string"
@@ -759,7 +758,7 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 
-def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file): #pylint: disable=too-many-locals, too-many-statements
+def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_hash, no_compress): #pylint: disable=too-many-locals, too-many-statements
     # 1. Load the Configuration
     try:
         with open(conf_file, "r", encoding="utf-8") as f:
@@ -779,30 +778,37 @@ def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file): #py
     files = collect_files(input_dir)
     num_files = len(files)
     # --- Phase 1: Parallel Hashing ---
-    print(f"Phase 1/2: Hashing {num_files} input files on {processes} cores...")
-    hash_start = datetime.now()
     total_bytes = 0
-    hashed_count = 0
-    # We use a Pool context manager for Phase 1
-    with Pool(processes) as pool:
-        for fi, stats in pool.imap_unordered(hash_worker, files):
-            hashed_count += 1
-            total_bytes += stats['size']
-            # Record in digest
-            digest_lines.append(f"{fi} | Size: {stats['size']} |"
-                                f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
-            # Calculate Hashing ETA
-            elapsed = (datetime.now() - hash_start).total_seconds()
-            percent = (hashed_count / num_files) * 100
-            if elapsed > 1:
-                files_per_sec = hashed_count / elapsed
-                remaining_files = num_files - hashed_count
-                eta_sec = remaining_files / files_per_sec
-                eta_str = str(timedelta(seconds=int(eta_sec)))
-                print(f"[HASHING: {percent:6.2f}%] Files: {hashed_count}/{num_files} |"
-                      f"ETA: {eta_str}      ", end='\r')
-
-    print(f"\nHashing complete. Total Data: {total_bytes / (1024**3):.2f} GB\n")
+    num_files = len(files)
+    if no_hash:
+        print("[!] --no-hash detected. Skipping input file integrity checks.")
+        total_bytes = sum(os.path.getsize(f) for f in files)
+        digest_lines.append("--- INPUT FILES (HASHING SKIPPED) ---\n")
+    else:
+        print(f"Phase 1/2: Hashing {num_files} input files on {processes} cores...")
+        hash_start = datetime.now()
+        total_bytes = 0
+        hashed_count = 0
+        # We use a Pool context manager for Phase 1
+        with Pool(processes) as pool:
+            for fi, stats in pool.imap_unordered(hash_worker, files):
+                hashed_count += 1
+                total_bytes += stats['size']
+                # Record in digest
+                digest_lines.append(f"{fi} | Size: {stats['size']} |"
+                                    f" MD5: {stats['md5']} | SHA256: {stats['sha256']}\n")
+                # Calculate Hashing ETA
+                elapsed = (datetime.now() - hash_start).total_seconds()
+                percent = (hashed_count / num_files) * 100
+                if elapsed > 1:
+                    files_per_sec = hashed_count / elapsed
+                    remaining_files = num_files - hashed_count
+                    eta_sec = remaining_files / files_per_sec
+                    eta_str = str(timedelta(seconds=int(eta_sec)))
+                    print(f"[HASHING: {percent:6.2f}%] Files: {hashed_count}/{num_files} |"
+                          f"ETA: {eta_str}      ", end='\r')
+    
+        print(f"\nHashing complete. Total Data: {total_bytes / (1024**3):.2f} GB\n")
 
     # --- Phase 2: Parallel Extraction & Filtering ---
     processed_bytes = 0
@@ -861,29 +867,43 @@ def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file): #py
                 print(f"[SORTING: {percent:6.2f}%] {i}/{len(log_files)} | {os.path.basename(path)[:30]:<30}", end='\r')
 
             # We still hash the files for the digest, even if we didn't sort them
-            stats = get_file_stats(path)
-            digest_lines.append(f"{path} | Size: {stats['size']} | SHA256: {stats['sha256']}\n")
+            if no_hash:
+                digest_lines.append(f"{path} | Size: {os.path.getsize(path)} | HASH SKIPPED\n")
+            else:            
+                stats = get_file_stats(path)
+                digest_lines.append(f"{path} | Size: {stats['size']} | SHA256: {stats['sha256']}\n")
 
         except Exception as e:
             print(f"\nWarning: Error processing {path}: {e}")
 
     # --- Archiving Phase ---
-    tar_filename = f"{os.path.normpath(output_dir)}.tar.xz"
-    print(f"Creating compressed archive: {tar_filename}...")
-    with tarfile.open(tar_filename, "w:xz", preset=9) as tar:
-        tar.add(output_dir, arcname="output", filter=reset_metadata)
+    if no_compress:
+        print("\n[!] --no-compress detected. Skipping .tar.xz creation.")
+    else:    
+        tar_filename = f"{os.path.normpath(output_dir)}.tar.xz"
+        print(f"Creating compressed archive: {tar_filename}...")
+        with tarfile.open(tar_filename, "w:xz", preset=9) as tar:
+            tar.add(output_dir, arcname="output", filter=reset_metadata)
 
     # --- Capture Finish Time ---
     finish_time = datetime.now()
     duration = finish_time - start_time
 
     # --- Final Digest Update ---
-    archive_stats = get_file_stats(tar_filename)
     digest_lines.append("\n--- FINAL SUMMARY ---\n")
     digest_lines.append(f"Processing Finish Time: {finish_time}\n")
     digest_lines.append(f"Total Execution Duration: {duration}\n")
-    digest_lines.append(f"Archive: {tar_filename} | Size: {archive_stats['size']} |"
-                        f" MD5: {archive_stats['md5']} | SHA256: {archive_stats['sha256']}\n")
+    if not no_compress:
+        try:
+            archive_stats = get_file_stats(tar_filename)
+            digest_lines.append(f"Archive: {tar_filename} | Size: {archive_stats['size']} |"
+                                f" MD5: {archive_stats['md5']} | SHA256: {archive_stats['sha256']}\n")
+        except NameError:
+            # Fallback if the variable was never even declared
+            digest_lines.append("Archive: Not created (compression skipped).\n")
+    else:
+        digest_lines.append("Archive: Compression skipped by user flag.\n")
+
     digest_path = f"{output_dir}_digest.txt"
     with open(digest_path, "w", encoding="utf-8") as df:
         df.writelines(digest_lines)
@@ -900,5 +920,9 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--ignore-case", action="store_true", help="Enable case-insensitive matching")
     parser.add_argument("--no-sort", action="store_true",
                         help="Skip the chronological sorting phase (saves time)")
+    parser.add_argument("--no-hash", action="store_true", default=False,
+                        help="Skip MD5/SHA256 calculation (saves CPU/IO)")
+    parser.add_argument("--no-compress", action="store_true", default=False,
+                        help="Skip final .tar.xz archiving")    
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf)
+    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf, args.no_hash, args.no_compress)
