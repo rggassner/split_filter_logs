@@ -937,3 +937,4 @@ if __name__ == "__main__":
 #TODO
 #Check if digest shows input files even without hashing
 #Add --no-digest option
+#Include "xz -l" result in the digest
