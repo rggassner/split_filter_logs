@@ -130,9 +130,15 @@ SPLITTERS =[]
 #        "filter_from_file": "services.txt",
 #        "enabled": false,
 #        "type": "string"
-#    }
+#    },
+#    {
+#        "name": "squid_source_ip",
+#        "split_function": "^\\d+\\.\\d+\\s+\\d+\\s+(?P<src_ip>\\d{1,3}(?:\\.\\d{1,3}){3})",
+#        "filter_from_file": "target.txt",
+#        "enabled": true,
+#        "type": "ip"
+#    }    
 #]
-
 
 def get_compiled_splitters(splitter_data, ignore_case):
     compiled_list = []
@@ -888,6 +894,18 @@ def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_h
         print(f"Creating compressed archive: {tar_filename}...")
         with tarfile.open(tar_filename, "w:xz", preset=9) as tar:
             tar.add(output_dir, arcname="output", filter=reset_metadata)
+        try:
+            # Capture xz -l output
+            xz_list = subprocess.check_output(["xz", "-l", tar_filename],
+                                              text=True,
+                                              stderr=subprocess.STDOUT)
+
+            digest_lines.append("\n--- ARCHIVE LISTING (xz -l) ---\n")
+            digest_lines.append(xz_list)
+            digest_lines.append("-" * 30 + "\n")
+
+        except Exception as e:
+            digest_lines.append(f"\n[!] Warning: Could not run xz -l: {e}\n")
 
     # --- Capture Finish Time ---
     finish_time = datetime.now()
@@ -937,4 +955,3 @@ if __name__ == "__main__":
 #TODO
 #Check if digest shows input files even without hashing
 #Add --no-digest option
-#Include "xz -l" result in the digest
