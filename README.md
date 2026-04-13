@@ -1,208 +1,118 @@
-# LogSplitter — Parallel Log File Splitter & Filter
+# Forensic Log Splitter & Filter
 
-**LogSplitter** is a fast, multiprocessing Python tool for splitting large log directories into separate files based on user-defined regex extraction rules and filters.
-
-It supports:
-
-* Plain text and `.gz` compressed logs
-* Filtering by IP addresses, networks, or string matches
-* Multiple parallel workers for high-speed processing
-* Per-field output directories with automatically created `.log` files
-
----
+A high-performance, parallelized Python utility designed for large-scale forensic log ingestion. This tool allows users to split massive log files (including `.gz` archives) into organized structures based on regex patterns, filter the data against specific watchlists, and perform chronological sorting.
 
 ## Features
 
- **Regex-based extraction** — define any capture group to extract log fields like IPs, usernames, or hostnames.
- **IP-aware filters** — filter by address or CIDR ranges using built-in `ipaddress` logic.
- **Parallel processing** — uses all available CPU cores by default.
- **Handles `.gz` logs** seamlessly.
- **Automatic output organization** — creates one folder per splitter (e.g., `split_by_src/`, `split_by_dst/`) with one `.log` per extracted value.
+-   **Parallel Processing:** Multi-core hashing, extraction, and filtering for maximum throughput.
+-   **Forensic Integrity:** Generates a standalone forensic digest with MD5/SHA256 hashes for all input and output files.
+-   **Large File Optimization:** Uses external merge sort with configurable memory buffers and temporary directory paths to handle files larger than system RAM (e.g., 40GB+).
+-   **Flexible Modes:**
+    
+    -   **Simple Mode:** Quick execution using pre-defined modules and auto-linked filter files.
+    -   **Expert Mode:** Full control via JSON configuration for complex, nested regex splitting.
+-   **Archive Ready:** Automatically creates compressed `.tar.xz` packages with integrity metadata.
 
----
+* * *
 
-## Example Use Case
+## Directory Structure
 
-Suppose you have network logs like this:
+For the script to operate in **Simple Mode**, maintain the following organization:
 
-```
-src="192.168.0.1" dst="8.8.8.8" user="admin"
-src="10.0.0.5" dst="8.8.4.4" user="guest"
-```
-
-You can configure **LogSplitter** to:
-
-* Extract and group logs by source or destination IP
-* Filter only those matching a given IP range (e.g., `10.0.0.0/8`)
-* Write results into folders like:
+Plaintext
 
 ```
-output/
-├── split_by_src/
-│   ├── 192.168.0.1.log
-│   └── 10.0.0.5.log
-└── split_by_dst/
-    ├── 8.8.8.8.log
-    └── 8.8.4.4.log
+.
+├── split_filter_logs.py
+├── splitters.conf           # Metadata for all modules
+└── splitters/
+    ├── src_ip               # Filter list for src_ip module
+    └── user_name            # Filter list for user_name module
 ```
 
----
-
-## Configuration
-
-All split rules are defined in the `SPLITTERS` list at the top of the script.
-
-Each splitter has:
-
-```python
-{
-    "name": "split_by_src",             # Folder name under output_dir
-    "split_function": r'src="(?P<src>.*?)"',  # Regex pattern with named group
-    "filter": [],                       # Optional list of allowed values
-    "filter_from_file": "src.filter",   # Optional file with one value per line
-    "enabled": True,                    # Whether to activate this splitter
-    "type": "ip"                        # 'ip' or 'string'
-}
-```
-
-You can enable or disable any rule via the `enabled` field.
-
-### Filter Files
-
-When `filter_from_file` is set (e.g., `src.filter`), LogSplitter loads entries line by line.
-
-* Lines starting with `#` are ignored.
-* Empty lines match all.
-* For IP types, supports single IPs and CIDR ranges (`192.168.0.0/24`).
-
----
+* * *
 
 ## Usage
 
-### Command-line
+### 1\. Simple Mode
 
-```bash
-python3 logsplitter.py <input_dir> <output_dir> [--processes N]
-```
+Perfect for daily tasks. Use pre-defined flags to activate specific splitting modules. The script will automatically look for matching filter files in the `splitters/` directory.
 
-**Arguments:**
-
-* `input_dir`: Directory containing `.log` or `.gz` log files.
-* `output_dir`: Where results are saved.
-* `--processes`: (optional) Number of worker processes. Defaults to all CPU cores.
-
-### Example
-
-```bash
-python3 logsplitter.py /data/logs /data/split_logs --processes 8
-```
-
-This will:
-
-1. Traverse `/data/logs/` recursively
-2. Read each file (supports `.gz`)
-3. Apply all enabled regex splitters
-4. Write matching lines into per-value `.log` files under `/data/split_logs/`
-
----
-
-## Output Structure
+Bash
 
 ```
-output_dir/
-├── split_by_src/
-│   ├── 10.0.0.1.log
-│   ├── 192.168.1.5.log
-│   └── ...
-├── split_by_dst/
-│   ├── 8.8.8.8.log
-│   └── ...
-└── split_by_user/
-    ├── admin.log
-    ├── guest.log
+# Split logs by Source IP using the pre-defined module
+./split_filter_logs.py /path/to/input /path/to/output --split_by_src_ip
+
+# List all available simple modules
+./split_filter_logs.py --list-modules
 ```
 
----
+### 2\. Expert Mode
 
-## Performance
+For complex investigations requiring specific resource management and custom configurations.
 
-* Uses Python’s built-in `multiprocessing.Pool`
-* Automatically detects and uses all CPU cores
-* Efficient for huge directories of compressed or plain logs
-
----
-
-## Dependencies
-
-All dependencies are from the Python standard library:
+Bash
 
 ```
-os, re, gzip, ipaddress, multiprocessing, argparse
+./split_filter_logs.py /data/in /data/out \
+    --conf my_investigation.json \
+    --sort-mem 32G \
+    --tmp-dir /data/working_scratch \
+    --processes 16
 ```
 
-No installation required — works out of the box with **Python ≥ 3.7**
+* * *
 
----
+## Advanced CLI Options
 
-## 🩶 Example Filters
+| Option | Description | Default |
+| --- | --- | --- |
+| `--conf` | Path to the JSON configuration file | `splitters.conf` |
+| `--processes` | Number of CPU cores to utilize | All available |
+| `--no-sort` | Skip the chronological sorting phase | False |
+| `--no-hash` | Skip MD5/SHA256 integrity checks | False |
+| `--no-compress` | Skip final `.tar.xz` creation | False |
+| `--tmp-dir` | Directory for large file sorting "swap" | System `/tmp` |
+| `--sort-mem` | RAM buffer for sorting (e.g., `80%` or `32G`) | `80%` |
 
-`src.filter`
+Export to Sheets
+
+* * *
+
+## Forensic Digest
+
+Upon completion, the script generates an `[output]_digest.txt`. This file is the **Source of Truth** for the operation, containing:
+
+1.  **Input Manifest:** Hashes of all raw source files.
+2.  **Output Manifest:** Hashes of every split log created.
+3.  **Archive Metadata:** `xz -l` compression stats and the hash of the final `.tar.xz` container.
+4.  **Audit Trail:** Start/Finish timestamps and total execution duration.
+
+* * *
+
+## Configuration (JSON)
+
+Each module in the configuration follows this schema:
+
+JSON
 
 ```
-# Internal network only
-10.0.0.0/8
-192.168.0.0/16
+{
+    "name": "src_ip",
+    "split_function": "^\\d+\\.\\d+\\s+\\d+\\s+(?P<val>\\d{1,3}(?:\\.\\d{1,3}){3})",
+    "type": "ip",
+    "description": "Splits logs by extracted Source IPv4 address"
+}
 ```
 
-`dst.filter`
+* * *
 
-```
-8.8.8.8
-1.1.1.1
-```
+## Requirements
 
----
-
-## Example Output
-
-Each line that matches a splitter rule and passes the filter is appended to the corresponding log file.
-
-For example:
-
-```
-output/split_by_src/192.168.0.1.log
-```
-
-contains:
-
-```
-src="192.168.0.1" dst="8.8.8.8" user="admin"
-```
-
-
-## License
-
-This project is licensed under the **MIT License** — feel free to use, modify, and distribute.
-
-## Tips
-
-* To disable a splitter, set `"enabled": False`
-* To match everything, use `"filter": [""]`
-* `.gz` files are read transparently — no manual decompression needed
-* If a regex doesn’t define a named group (`?P<name>`), the entire match is used as the key
-
-## TODO
-
-* For reproducible results, save a run_report.txt with:
-  - Environment: python version, os version and command lines arguments used.
-  - Config: a copy of the splitters regex patterns
-  - Stats: total lines processed, total matches, and total malformed lines.
-* Date intervals
-* Interactive menu
-  
----
+-   **Python:** 3.12+
+-   **System Utilities:** `sort` (GNU Coreutils), `xz`
+-   **Recommended Hardware:** SSD/NVMe storage for high-IOPS sorting phases.
 
 
 
-
-> **LogSplitter** — Simple. Parallel. Reliable. Perfect for massive log archives.
