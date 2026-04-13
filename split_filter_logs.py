@@ -973,7 +973,7 @@ if __name__ == "__main__":
     expert.add_argument("--no-hash", action="store_true")
     expert.add_argument("--no-compress", action="store_true")
     expert.add_argument("--tmp-dir", default=None)
-    expert.add_argument("--sort-mem", default="80%%") # Remember the double %%
+    expert.add_argument("--sort-mem", default="80%", help="Memory buffer for sort, e.g., '32G' or '80%%' (default: 80%%)") # Remember the double %%
     
     args = parser.parse_args()
 
