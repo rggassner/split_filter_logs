@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#pylint: disable=broad-exception-caught,too-many-statements,too-many-branches,global-statement,too-many-locals,too-many-positional-arguments,too-many-arguments
 """
 Forensic Multiprocess Log Splitter and Categorizer
 
@@ -49,96 +50,16 @@ import tarfile
 from datetime import datetime, timedelta
 from multiprocessing import Pool, cpu_count
 
-
 SPLITTERS =[]
 
-# Example config
-#[
-#    {
-#        "name": "global_string",
-#        "split_function": "", 
-#        "filter_from_file": "ids.txt", 
-#        "enabled": false,
-#        "type": "global_string"
-#    },
-#    {
-#        "name": "split_by_user",
-#        "split_function": " user=\"(?:.*?\\()?(?P<username>[a-zA-Z0-9._-]+)\\s*(?:\\))?\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
-#        "name": "split_by_user_dn",
-#        "split_function": " user_dn=\"(?P<user_dn>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
-#        "name": "split_by_session_uid",
-#        "split_function": " session_uid=\"(?P<session_uid>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
-#        "name": "split_by_xlatesrc",
-#        "split_function": " xlatesrc=\"(?P<xlatesrc>.*?)\"",
-#        "filter_from_file": "",  
-#        "enabled": false,
-#        "type": "ip"
-#    },
-#    {
-#        "name": "split_by_src",
-#        "split_function": " src=\"(?P<src>.*?)\"",
-#        "filter_from_file": "",  
-#        "enabled": false,
-#        "type": "ip"
-#    },
-#    {
-#        "name": "split_by_dst",
-#        "split_function": " dst=\"(?P<dst>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "ip"
-#    },
-#    {
-#        "name": "split_by_status",
-#        "split_function": " status=\"(?P<status>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
-#        "name": "split_by_client_name",
-#        "split_function": " client_name=\"(?P<clientname>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
-#        "name": "split_by_office_mode_ip",
-#        "split_function": " office_mode_ip=\"(?P<officemodeip>.*?)\"",
-#        "filter_from_file": "",
-#        "enabled": false,
-#        "type": "ip"
-#    },
-#    {
-#        "name": "split_by_service",
-#        "split_function": " service=\"(?P<service>.*?)\"",
-#        "filter_from_file": "services.txt",
-#        "enabled": false,
-#        "type": "string"
-#    },
-#    {
-#        "name": "squid_source_ip",
-#        "split_function": "^\\d+\\.\\d+\\s+\\d+\\s+(?P<src_ip>\\d{1,3}(?:\\.\\d{1,3}){3})",
-#        "filter_from_file": "target.txt",
-#        "enabled": true,
-#        "type": "ip"
-#    }    
-#]
+def load_config():
+    conf_path = os.path.join(os.path.dirname(__file__), '', 'splitters.conf')
+    try:
+        with open(conf_path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return []
 
 def get_compiled_splitters(splitter_data, ignore_case):
     compiled_list = []
@@ -171,12 +92,13 @@ def get_compiled_splitters(splitter_data, ignore_case):
         # Prepare filter set
         if ftype == "ip":
             filter_set = []
-            for f in raw_filters:
-                if not f: continue
+            for fr in raw_filters:
+                if not fr: 
+                    continue
                 try:
-                    filter_set.append(ipaddress.ip_network(f, strict=False) if "/" in f else ipaddress.ip_address(f))
+                    filter_set.append(ipaddress.ip_network(fr, strict=False) if "/" in fr else ipaddress.ip_address(fr))
                 except ValueError:
-                    print(f"Warning: invalid IP filter: {f}")
+                    print(f"Warning: invalid IP filter: {fr}")
         else:
             # If ignore_case is True, we normalize the set to lowercase
             if ignore_case:
@@ -349,7 +271,7 @@ def load_filter_list(l_splitter):
                     if not line or line.startswith("#"):
                         continue
                     filters.append(line)
-        except Exception as e: #pylint: disable=broad-exception-caught
+        except Exception as e:
             print(f"Warning: could not load filter file"
                   f" {splitter.get('filter_from_file', '')} "
                   f" for {splitter.get('name', '')}: {e}")
@@ -487,7 +409,7 @@ def open_maybe_compressed(file_path, strict=False): #pylint: disable=too-many-re
                                 yield line.decode("utf-8", errors="ignore")
                 return generator()
 
-        except Exception as e: #pylint: disable=broad-exception-caught
+        except Exception as e: 
             msg = f"Error reading ZIP file '{file_path}': {e}"
             if strict:
                 raise ValueError(msg) from e  # Re-raise with original exception context
@@ -531,6 +453,30 @@ def make_dirs(path):
         os.makedirs(path)
 
 def match_filter(value, f_splitter):
+    """
+    Determines if an extracted value meets the criteria defined in the splitter's filter set.
+
+    This function acts as a gatekeeper during Phase 2. It supports three primary logic flows:
+    1. Global Mode: If the type is 'global_string' or no filter list exists, it returns True 
+       (matches everything).
+    2. IP Mode: Performs forensic-grade validation using the 'ipaddress' module. It checks 
+       if 'value' is an exact IP match or falls within a CIDR subnet defined in the filter.
+    3. String Mode: Performs a high-speed membership check against a set of strings, 
+       honoring the 'ignore_case' configuration.
+
+    Args:
+        value (str): The string or IP address extracted from a log line via regex.
+        f_splitter (dict): The specific splitter configuration object from the JSON, 
+            containing keys: 'type', 'filter' (the set of allowed values), and 'ignore_case'.
+
+    Returns:
+        bool: True if the value matches the filter criteria or if filtering is disabled 
+            for this module; False otherwise.
+
+    Note:
+        In IP mode, if 'value' is not a valid IP address, it will fail the conversion and 
+        return False, effectively filtering out malformed data.
+    """    
     filters = f_splitter["filter"]
     if f_splitter["type"] == "global_string" or not filters:
         return True
@@ -542,7 +488,8 @@ def match_filter(value, f_splitter):
                 if (isinstance(fi, (ipaddress.IPv4Address, ipaddress.IPv6Address)) and ip_val == fi) or \
                    (isinstance(fi, (ipaddress.IPv4Network, ipaddress.IPv6Network)) and ip_val in fi):
                     return True
-        except ValueError: pass
+        except ValueError: 
+            pass
         return False
     
     # Check against set (case-sensitive or insensitive based on config)
@@ -649,7 +596,7 @@ def process_file(file_args):
 
     except FileNotFoundError as e:
         print(f"File not found: {file_path}. Error: {e}")
-    except Exception as e: #pylint: disable=broad-exception-caught
+    except Exception as e: 
         print(f"Unexpected error processing {file_path}: {e}")
 
 
@@ -764,18 +711,82 @@ def collect_files(input_dir):
     return sorted(file_list)
 
 
-def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_hash, no_compress, tmp_dir, sort_mem): #pylint: disable=too-many-locals, too-many-statements
+def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_hash, no_compress, tmp_dir, sort_mem, argsi):
+    """
+    Executes the multi-phase forensic log splitting, filtering, and sorting pipeline.
+
+    This function coordinates three primary phases:
+    1. Metadata/Hashing: Validates input integrity (MD5/SHA256) and calculates total volume.
+    2. Extraction/Filtering: Parallelized processing of logs based on regex splitters.
+    3. Post-Processing: Chronological sorting of output logs and final compression.
+
+    Args:
+        input_dir (str): Path to the directory containing source log files (.gz or plain text).
+        output_dir (str): Path where the split and filtered log structure will be created.
+        processes (int): Number of concurrent worker processes for parallel tasks.
+        ignore_case (bool): If True, regex matching will be case-insensitive.
+        no_sort (bool): If True, skips the Phase 3 chronological sorting to save time.
+        conf_file (str): Path to the JSON file defining regex splitters and modules.
+        no_hash (bool): If True, skips Phase 1 hashing for faster processing.
+        no_compress (bool): If True, prevents the creation of the final .tar.xz archive.
+        tmp_dir (str, optional): Custom path for 'sort' command swap files. Recommended for 
+            large logs to avoid filling the root partition.
+        sort_mem (str): Memory limit for the 'sort' command (e.g., '80%', '32G').
+        argsi (argparse.Namespace): The full namespace object from the CLI, used to 
+            dynamically toggle module 'enabled' states based on --split_by flags.
+
+    Returns:
+        None: Generates output files, a forensic digest, and an archive on disk.
+
+    Raises:
+        SystemExit: If the configuration file cannot be loaded or no splitters are enabled.
+        OSError: If there are issues with directory creation or file access.
+    """    
     # 1. Load the Configuration
     try:
-        with open(conf_file, "r", encoding="utf-8") as f:
-            splitter_data = json.load(f)
+        with open(conf_file, "r", encoding="utf-8") as fi:
+            splitter_data = json.load(fi)
     except Exception as e:
         print(f"[!] FATAL: Could not load config file {conf_file}: {e}")
         sys.exit(1)
 
+    # Modular Logic: Update splitter_data based on CLI flags
+    script_diri = os.path.dirname(os.path.abspath(__file__))
+    active_via_cli = []
+
+    for itemi in splitter_data:
+        # Check for the specific flag name we generated in argparse
+        flag_name = f"split_by_{itemi['name']}"
+
+        if getattr(argsi, flag_name, False):
+            itemi["enabled"] = True
+            active_via_cli.append(itemi['name'])
+
+            # Auto-link the filter file logic
+            # Note: I added .txt extension here to match our previous plan
+            filter_path = os.path.join(script_diri, "splitters", f"{itemi['name']}.txt")
+            if os.path.exists(filter_path):
+                itemi["filter_from_file"] = filter_path
+        else:
+            # If Simple flags are present in the command line at all,
+            # we disable anything not explicitly mentioned.
+            # We check if ANY split_by flag was passed to the script.
+            any_simple_flag_set = any(getattr(argsi, f"split_by_{i['name']}", False) for i in splitter_data)
+            if any_simple_flag_set:
+                itemi["enabled"] = False
+
+    if active_via_cli:
+        print(f"[*] Simple Mode: Activating modules: {', '.join(active_via_cli)}")
+    else:
+        print("[*] Expert Mode: Using default enabled states from JSON.")
+
     global COMPILED_SPLITTERS
     COMPILED_SPLITTERS = get_compiled_splitters(splitter_data, ignore_case)
+
     if not COMPILED_SPLITTERS:
+        # Debug helper: print the status of the first item to see why it failed
+        if splitter_data:
+            print(f"[DEBUG] First splitter state: name={splitter_data[0]['name']}, enabled={splitter_data[0]['enabled']}")
         print("[!] No enabled splitters found in config. Aborting.")
         sys.exit(1)
     start_time = datetime.now()
@@ -843,8 +854,6 @@ def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_h
         for name in walk_files:
             if name.endswith(".log"):
                 log_files.append(os.path.join(root, name))
-
-    num_logs = len(log_files)
     if no_sort:
         print("\n[!] --no-sort passed. Skipping chronological sorting phase.")
         digest_lines.append("\n--- OUTPUT FILES (UNSORTED) ---\n")
@@ -933,25 +942,52 @@ def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_h
     print(f"Processing complete in {datetime.now() - start_time}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input_dir", help="Directory with input log files (.gz or plain text)")
-    parser.add_argument("output_dir", help="Directory to store filtered logs")
-    parser.add_argument("--conf", required=True, help="Path to the JSON configuration file")
-    parser.add_argument("--processes", type=int, default=cpu_count(),
-                        help="Number of worker processes (default: all CPUs)")
-    parser.add_argument("-i", "--ignore-case", action="store_true", help="Enable case-insensitive matching")
-    parser.add_argument("--no-sort", action="store_true",
-                        help="Skip the chronological sorting phase (saves time)")
-    parser.add_argument("--no-hash", action="store_true", default=False,
-                        help="Skip MD5/SHA256 calculation (saves CPU/IO)")
-    parser.add_argument("--no-compress", action="store_true", default=False,
-                        help="Skip final .tar.xz archiving")    
-    parser.add_argument("--tmp-dir", default=None,
-                        help="Temporary directory for sorting (default: system /tmp or output_dir)")
-    parser.add_argument("--sort-mem", default="80%",
-                    help="Memory buffer for sort, e.g., '32G' or '80%%' (default: 80%%)")    
+    # Define paths relative to the script location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_conf = os.path.join(script_dir, "", "splitters.conf")
+    
+    # Load metadata for CLI generation
+    try:
+        with open(default_conf, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception:
+        metadata = []
+
+    parser = argparse.ArgumentParser(description="Forensic Log Splitter")
+    # Basic Arguments
+    parser.add_argument("input_dir", help="Input logs path")
+    parser.add_argument("output_dir", help="Output logs path")
+    parser.add_argument("--conf", default=default_conf, help="Path to config (default: splitters.conf)")
+    
+    # Simple Options (Dynamic Flags)
+    group = parser.add_argument_group("Splitter Modules (Simple Mode)")
+    for item in metadata:
+        group.add_argument(f"--split_by_{item['name']}", action="store_true", 
+                           help=item.get("description", f"Split by {item['name']}"))
+    parser.add_argument("--list-modules", action="store_true", help="Show all available modules and exit")
+    # Expert Options
+    expert = parser.add_argument_group("Expert Options")
+    expert.add_argument("--processes", type=int, default=cpu_count())
+    expert.add_argument("-i", "--ignore-case", action="store_true")
+    expert.add_argument("--no-sort", action="store_true")
+    expert.add_argument("--no-hash", action="store_true")
+    expert.add_argument("--no-compress", action="store_true")
+    expert.add_argument("--tmp-dir", default=None)
+    expert.add_argument("--sort-mem", default="80%%") # Remember the double %%
+    
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, args.no_sort, args.conf, args.no_hash, args.no_compress, args.tmp_dir, args.sort_mem)
+
+    if args.list_modules:
+        print(f"{'Module':<20} | {'Description'}")
+        print("-" * 50)
+        for item in metadata:
+            print(f"{item['name']:<20} | {item.get('description', 'N/A')}")
+        sys.exit(0)
+
+    # Pass args to main
+    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, 
+         args.no_sort, args.conf, args.no_hash, args.no_compress, 
+         args.tmp_dir, args.sort_mem, args)    
 #TODO
 #Check if digest shows input files even without hashing
 #Add --no-digest option
