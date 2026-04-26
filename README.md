@@ -1,118 +1,249 @@
-# Forensic Log Splitter & Filter
+# Forensic Log Splitter
 
-A high-performance, parallelized Python utility designed for large-scale forensic log ingestion. This tool allows users to split massive log files (including `.gz` archives) into organized structures based on regex patterns, filter the data against specific watchlists, and perform chronological sorting.
+A high-performance, modular log processing tool designed for large-scale forensic analysis.
+It ingests raw or compressed logs, extracts relevant data using configurable rules, and outputs organized, filtered, and optionally sorted results.
 
 ## Features
 
--   **Parallel Processing:** Multi-core hashing, extraction, and filtering for maximum throughput.
--   **Forensic Integrity:** Generates a standalone forensic digest with MD5/SHA256 hashes for all input and output files.
--   **Large File Optimization:** Uses external merge sort with configurable memory buffers and temporary directory paths to handle files larger than system RAM (e.g., 40GB+).
--   **Flexible Modes:**
-    
-    -   **Simple Mode:** Quick execution using pre-defined modules and auto-linked filter files.
-    -   **Expert Mode:** Full control via JSON configuration for complex, nested regex splitting.
--   **Archive Ready:** Automatically creates compressed `.tar.xz` packages with integrity metadata.
+* Multi-format input support:
 
-* * *
+  * Plain text
+  * gzip (.gz)
+  * bzip2 (.bz2)
+  * xz/lzma (.xz)
+  * zip (.zip)
 
-## Directory Structure
+* Parallel processing:
 
-For the script to operate in **Simple Mode**, maintain the following organization:
+  * Multi-core hashing and processing
+  * Efficient buffering to reduce disk I/O
 
-Plaintext
+* Flexible splitting engine:
+
+  * Regex-based extraction
+  * String-based matching
+  * IP and CIDR filtering
+  * Case-sensitive or insensitive modes
+
+* Modular configuration:
+
+  * JSON-based splitter definitions
+  * Optional external filter files
+
+* Output handling:
+
+  * Automatic directory organization by splitter
+  * Buffered writes with file locking
+  * Optional chronological sorting
+
+* Integrity and traceability:
+
+  * MD5 and SHA256 hashing
+  * Full execution digest report
+
+* Archiving:
+
+  * Optional `.tar.xz` compression with reproducible metadata
+
+## Project Structure
 
 ```
 .
-├── split_filter_logs.py
-├── splitters.conf           # Metadata for all modules
-└── splitters/
-    ├── src_ip               # Filter list for src_ip module
-    └── user_name            # Filter list for user_name module
+├── script.py
+├── splitters.conf
+├── splitters/
+│   ├── module1.txt
+│   ├── module2.txt
+│   └── ...
 ```
 
-* * *
+## Installation
+
+No external Python dependencies are required beyond the standard library.
+
+Ensure the following system tools are available:
+
+* sort (GNU coreutils)
+* xz
 
 ## Usage
 
-### 1\. Simple Mode
-
-Perfect for daily tasks. Use pre-defined flags to activate specific splitting modules. The script will automatically look for matching filter files in the `splitters/` directory.
-
-Bash
+Basic usage:
 
 ```
-# Split logs by Source IP using the pre-defined module
-./split_filter_logs.py /path/to/input /path/to/output --split_by_src_ip
-
-# List all available simple modules
-./split_filter_logs.py --list-modules
+python3 script.py <input_dir> <output_dir>
 ```
 
-### 2\. Expert Mode
-
-For complex investigations requiring specific resource management and custom configurations.
-
-Bash
+Example:
 
 ```
-./split_filter_logs.py /data/in /data/out \
-    --conf my_investigation.json \
-    --sort-mem 32G \
-    --tmp-dir /data/working_scratch \
-    --processes 16
+python3 script.py ./logs ./output
 ```
 
-* * *
+## Command-Line Options
 
-## Advanced CLI Options
+### Basic
 
-| Option | Description | Default |
-| --- | --- | --- |
-| `--conf` | Path to the JSON configuration file | `splitters.conf` |
-| `--processes` | Number of CPU cores to utilize | All available |
-| `--no-sort` | Skip the chronological sorting phase | False |
-| `--no-hash` | Skip MD5/SHA256 integrity checks | False |
-| `--no-compress` | Skip final `.tar.xz` creation | False |
-| `--tmp-dir` | Directory for large file sorting "swap" | System `/tmp` |
-| `--sort-mem` | RAM buffer for sorting (e.g., `80%` or `32G`) | `80%` |
+* `input_dir`
+  Directory containing input log files
 
-Export to Sheets
+* `output_dir`
+  Directory where processed logs will be stored
 
-* * *
+* `--conf`
+  Path to configuration file (default: `splitters.conf`)
 
-## Forensic Digest
+### Splitter Modules (Simple Mode)
 
-Upon completion, the script generates an `[output]_digest.txt`. This file is the **Source of Truth** for the operation, containing:
+Enable specific modules:
 
-1.  **Input Manifest:** Hashes of all raw source files.
-2.  **Output Manifest:** Hashes of every split log created.
-3.  **Archive Metadata:** `xz -l` compression stats and the hash of the final `.tar.xz` container.
-4.  **Audit Trail:** Start/Finish timestamps and total execution duration.
+```
+--split_by_<module_name>
+```
 
-* * *
+Example:
 
-## Configuration (JSON)
+```
+--split_by_ip --split_by_email
+```
 
-Each module in the configuration follows this schema:
+List available modules:
 
-JSON
+```
+--list-modules
+```
+
+### Expert Options
+
+* `--processes <int>`
+  Number of parallel processes (default: CPU count)
+
+* `-i, --ignore-case`
+  Enable case-insensitive matching
+
+* `--no-sort`
+  Skip sorting output files
+
+* `--no-hash`
+  Skip hashing input files
+
+* `--no-compress`
+  Skip archive creation
+
+* `--tmp-dir <path>`
+  Temporary directory for sorting
+
+* `--sort-mem <value>`
+  Memory buffer for sort (e.g., `32G`, `80%`)
+
+## Configuration
+
+The `splitters.conf` file defines how logs are processed.
+
+Each splitter includes:
+
+* `name`
+  Identifier for output grouping
+
+* `type`
+  One of:
+
+  * `string`
+  * `start_string`
+  * `global_string`
+  * `ip`
+
+* `split_function`
+  Regex with named capture group
+
+* `filter`
+  Inline filter values
+
+* `filter_from_file`
+  External file with filter values
+
+* `enabled`
+  Boolean to activate/deactivate
+
+### Example
 
 ```
 {
-    "name": "src_ip",
-    "split_function": "^\\d+\\.\\d+\\s+\\d+\\s+(?P<val>\\d{1,3}(?:\\.\\d{1,3}){3})",
-    "type": "ip",
-    "description": "Splits logs by extracted Source IPv4 address"
+  "name": "ip",
+  "type": "ip",
+  "split_function": "(?P<ip>\\b\\d+\\.\\d+\\.\\d+\\.\\d+\\b)",
+  "filter_from_file": "splitters/ip.txt",
+  "enabled": true
 }
 ```
 
-* * *
+## Processing Pipeline
 
-## Requirements
+1. Configuration loading
+2. Optional hashing of input files
+3. Parallel log processing and filtering
+4. Buffered output writing
+5. Optional sorting of output files
+6. Optional archive generation
+7. Digest report creation
 
--   **Python:** 3.12+
--   **System Utilities:** `sort` (GNU Coreutils), `xz`
--   **Recommended Hardware:** SSD/NVMe storage for high-IOPS sorting phases.
+## Output
 
+The tool generates:
 
+* Structured log files:
 
+  ```
+  output/
+    ├── <splitter_name>/
+    │   ├── value1.log
+    │   ├── value2.log
+  ```
+
+* Digest file:
+
+  ```
+  <output_dir>_digest.txt
+  ```
+
+* Optional archive:
+
+  ```
+  <output_dir>.tar.xz
+  ```
+
+## Digest Contents
+
+* Input file metadata (size, hashes)
+* Output file metadata
+* Archive details
+* Execution timestamps
+* Total duration
+
+## Performance Considerations
+
+* Uses streaming reads to handle large files
+* Buffered writes reduce disk contention
+* Parallel execution scales with CPU cores
+* Sorting leverages system `sort` for efficiency
+
+## Error Handling
+
+* Invalid filters are logged as warnings
+* Missing required filter files cause immediate termination
+* Unsupported file formats are skipped unless strict mode is enforced
+
+## Known Limitations
+
+* Relies on external `sort` and `xz` utilities
+* Memory usage during sorting depends on system configuration
+* ZIP processing reads files sequentially without parallelism
+
+## TODO
+
+* Add `--no-digest` option
+* Improve digest behavior when hashing is disabled
+
+## License
+
+This project is provided as-is for forensic and analytical use.
