@@ -420,6 +420,65 @@ def collect_files(input_dir):
 
 
 def main(input_dir, output_dir, processes, ignore_case, no_sort, conf_file, no_hash, no_compress, tmp_dir, sort_mem, argsi):
+    """
+    Orchestrates the full forensic log processing pipeline: configuration loading,
+    parallel hashing, log extraction and filtering, optional sorting, and final archiving.
+
+    This function acts as the central coordinator for a multi-phase workflow:
+        1. Loads and prepares splitter configuration (with optional CLI overrides).
+        2. Compiles splitter rules for log parsing and filtering.
+        3. Performs parallel hashing of input files (optional).
+        4. Processes files in parallel, extracting and distributing log lines
+           into categorized output files based on configured splitters.
+        5. Optionally sorts output logs chronologically using system `sort`.
+        6. Optionally compresses the final output into a `.tar.xz` archive.
+        7. Generates a digest file containing metadata, hashes, and execution summary.
+
+    Parameters
+    ----------
+    input_dir : str
+        Path to the directory containing input log files (supports recursive traversal).
+    output_dir : str
+        Path where processed and split log files will be written.
+    processes : int
+        Number of worker processes to use for parallel operations.
+    ignore_case : bool
+        Whether to perform case-insensitive matching in splitters.
+    no_sort : bool
+        If True, skips chronological sorting of output log files.
+    conf_file : str
+        Path to the JSON configuration file defining splitter rules.
+    no_hash : bool
+        If True, skips hashing of input and output files.
+    no_compress : bool
+        If True, skips creation of the compressed `.tar.xz` archive.
+    tmp_dir : str or None
+        Optional temporary directory for external sorting operations.
+    sort_mem : str
+        Memory limit passed to the `sort` command (e.g., "80%", "4G").
+    argsi : argparse.Namespace
+        Parsed CLI arguments, used to dynamically enable/disable splitters
+        in "Simple Mode".
+
+    Behavior
+    --------
+    - Supports both "Expert Mode" (config-driven) and "Simple Mode" (CLI-driven module selection).
+    - Ensures deterministic processing via hashing and optional sorting.
+    - Handles large datasets efficiently using multiprocessing and buffered I/O.
+    - Produces a detailed digest file summarizing inputs, outputs, and execution metrics.
+
+    Raises
+    ------
+    SystemExit
+        If configuration loading fails or no valid splitters are enabled.
+
+    Notes
+    -----
+    - Designed for forensic-scale log processing where traceability and integrity matter.
+    - External dependencies include system utilities such as `sort` and `xz`.
+    - Output structure is organized per splitter, with one file per matched value.
+
+    """    
     # 1. Load the Configuration
     try:
         with open(conf_file, "r", encoding="utf-8") as fi:
