@@ -412,6 +412,28 @@ def flush_buffer(buffer):
                 fcntl.flock(f_buffer, fcntl.LOCK_UN)
 
 def collect_files(input_dir):
+    """
+    Recursively collects all file paths from a given directory.
+
+    Walks through the directory tree starting at `input_dir` and gathers
+    the full path of every file encountered. The resulting list is sorted
+    to ensure deterministic processing order.
+
+    Parameters
+    ----------
+    input_dir : str
+        Root directory to search for files.
+
+    Returns
+    -------
+    list of str
+        Sorted list of absolute file paths found within the directory tree.
+
+    Notes
+    -----
+    - Traversal includes all subdirectories.
+    - Symbolic links are handled according to `os.walk` default behavior.
+    """
     file_list = []
     for root, _, files in os.walk(input_dir):
         for name in files:
