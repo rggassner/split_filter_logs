@@ -400,6 +400,32 @@ def process_line(line, output_dir, buffer):
         buffer[out_path].append(line)
 
 def flush_buffer(buffer):
+    """
+    Flushes buffered log lines to their respective output files.
+
+    Iterates over a dictionary mapping output file paths to lists of log lines,
+    ensuring that each target directory exists before appending the buffered
+    content to disk. File writes are protected with an exclusive lock to
+    prevent race conditions when multiple processes write to the same file.
+
+    Parameters
+    ----------
+    buffer : dict
+        Dictionary where keys are output file paths (str) and values are lists
+        of log lines (list of str) to be written.
+
+    Behavior
+    --------
+    - Creates parent directories as needed.
+    - Appends all buffered lines to their corresponding files.
+    - Uses `fcntl.flock` to guarantee safe concurrent writes.
+    - Preserves byte integrity using UTF-8 encoding with `surrogateescape`.
+
+    Notes
+    -----
+    - Designed for use in multiprocessing environments.
+    - Buffer is not cleared by this function; caller is responsible for cleanup.
+    """
     for out_path, lines in buffer.items():
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
