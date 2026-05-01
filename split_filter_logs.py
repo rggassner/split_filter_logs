@@ -351,6 +351,45 @@ def process_file(file_args):
         print(f"Unexpected error processing {file_path}: {e}")
 
 def process_line(line, output_dir, buffer):
+    """
+    Processes a single log line against all configured splitters and routes it
+    to the appropriate output buffer(s).
+
+    For each splitter definition in `COMPILED_SPLITTERS`, this function attempts
+    to extract a matching value using one of several strategies:
+        - "start_string": checks if the line begins with any configured prefix.
+        - "global_string": searches for keyword presence anywhere in the line.
+        - "regex"/default: applies a compiled regular expression and extracts
+          a named or full match group.
+
+    If a match is found and passes optional filter validation, the line is
+    assigned to an output file derived from the splitter name and extracted value.
+    Instead of writing immediately to disk, lines are accumulated in `buffer`
+    for batch flushing.
+
+    Parameters
+    ----------
+    line : str
+        The input log line to evaluate.
+    output_dir : str
+        Base directory where categorized log files will be written.
+    buffer : dict
+        In-memory buffer mapping output file paths (str) to lists of log lines
+        (list of str). This function appends matching lines to this structure.
+
+    Behavior
+    --------
+    - Supports case-sensitive and case-insensitive matching per splitter.
+    - Applies optional filtering (e.g., IP matching, keyword filtering).
+    - Generates safe output filenames by normalizing or sanitizing extracted values.
+    - Allows a single line to match multiple splitters and be written to multiple outputs.
+
+    Notes
+    -----
+    - Actual file I/O is deferred; `flush_buffer` is responsible for writing to disk.
+    - Relies on global `COMPILED_SPLITTERS` configuration.
+    - Designed for high-throughput log processing with minimal per-line overhead.
+    """
     line_lower = line.lower()
     
     for splitter_line in COMPILED_SPLITTERS:
