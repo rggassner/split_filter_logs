@@ -319,6 +319,41 @@ def process_file_with_size(file_args):
     return file_path, file_size
 
 def process_file(file_args):
+    """
+    Processes a single input file by streaming its contents, applying line-level
+    splitting logic, and buffering results for batched disk writes.
+
+    The function opens the file (handling compression transparently), iterates
+    over each line, and delegates matching and routing logic to `process_line`.
+    Matched lines are accumulated in an in-memory buffer and periodically flushed
+    to disk to reduce I/O overhead.
+
+    Parameters
+    ----------
+    file_args : tuple
+        Tuple containing:
+            - file_path (str): Path to the input file to process.
+            - output_dir (str): Base directory where processed output files will be written.
+
+    Behavior
+    --------
+    - Supports plain text and multiple compressed formats via `open_maybe_compressed`.
+    - Processes files in a streaming fashion to remain memory-efficient.
+    - Buffers output lines and flushes them in batches (`buffer_limit`) to optimize disk I/O.
+    - Ensures any remaining buffered data is written after processing completes.
+    - Logs progress and errors to stdout.
+
+    Error Handling
+    --------------
+    - Gracefully handles missing files (`FileNotFoundError`).
+    - Catches and reports unexpected exceptions without interrupting the overall pipeline.
+
+    Notes
+    -----
+    - Intended to be executed in parallel (e.g., via multiprocessing Pool).
+    - Relies on `process_line` for classification and `flush_buffer` for safe writes.
+    - Buffer size is fixed and tuned for performance; adjust `buffer_limit` if needed.
+    """
     file_path, output_dir = file_args
     buffer = {}
     buffer_limit = 10000
