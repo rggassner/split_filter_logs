@@ -429,10 +429,10 @@ def process_line(line, output_dir, buffer):
     
     for splitter_line in COMPILED_SPLITTERS:
         value = None
-        ftype = splitter_line["type"]
+        sp_ftype = splitter_line["type"]
         ignore_case = splitter_line["ignore_case"]
         
-        if ftype == "start_string":
+        if sp_ftype == "start_string":
             target = line_lower if ignore_case else line
             # This will now succeed because filter is a TUPLE
             if target.startswith(splitter_line["filter"]):
@@ -441,7 +441,7 @@ def process_line(line, output_dir, buffer):
                         value = kw
                         break
         
-        elif ftype == "global_string":
+        elif sp_ftype == "global_string":
             target = line_lower if ignore_case else line
             for kw in splitter_line["filter"]:
                 if kw in target:
