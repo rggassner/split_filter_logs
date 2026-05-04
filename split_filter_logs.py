@@ -313,6 +313,39 @@ def match_filter(value, f_splitter):
 
 
 def process_file_with_size(file_args):
+    """
+    Wrapper around `process_file` that also returns the input file size.
+
+    This helper is designed for use in parallel processing workflows where
+    both file processing and progress tracking (based on bytes processed)
+    are required. It retrieves the file size upfront, delegates the actual
+    processing to `process_file`, and returns metadata for aggregation.
+
+    Parameters
+    ----------
+    file_args : tuple
+        Tuple containing:
+            - file_path (str): Path to the input file.
+            - output_dir (str): Base directory for processed output.
+
+    Returns
+    -------
+    tuple
+        (file_path, file_size) where:
+            - file_path (str): Path of the processed file.
+            - file_size (int): Size of the file in bytes.
+
+    Behavior
+    --------
+    - Computes file size before processing begins.
+    - Delegates all processing logic to `process_file`.
+    - Enables progress estimation based on total bytes processed.
+
+    Notes
+    -----
+    - Intended for use with multiprocessing (e.g., `Pool.imap_unordered`).
+    - File size is retrieved even if processing fails or produces no output.
+    """
     file_path, _ = file_args
     file_size = os.path.getsize(file_path)
     process_file(file_args)
