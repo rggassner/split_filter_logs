@@ -286,6 +286,43 @@ def make_dirs(path):
 
 
 def match_filter(value, f_splitter):
+    """
+    Evaluates whether an extracted value satisfies the filter criteria
+    defined in a splitter configuration.
+
+    The filtering behavior depends on the splitter type:
+        - "ip": Performs exact IP or CIDR membership checks using `ipaddress`.
+        - "global_string": Always returns True (filtering handled at regex level).
+        - default/string: Performs membership check against a set of allowed values.
+
+    Parameters
+    ----------
+    value : str
+        Extracted value from a log line (e.g., IP address or keyword).
+    f_splitter : dict
+        Splitter configuration containing:
+            - "type" (str): Type of matching logic ("ip", "global_string", or string).
+            - "filter" (iterable): Collection of allowed values or IP/network objects.
+            - "ignore_case" (bool, optional): Whether to normalize case for comparison.
+
+    Returns
+    -------
+    bool
+        True if the value matches the filter criteria or if no filters are defined;
+        False otherwise.
+
+    Behavior
+    --------
+    - If no filters are configured, all values are accepted.
+    - IP filters support both exact matches and CIDR range inclusion.
+    - Invalid IP values are safely rejected.
+    - String filters optionally normalize case before comparison.
+
+    Notes
+    -----
+    - Designed to be lightweight, as it is called for every matched log line.
+    - Assumes IP filters are precompiled into `ipaddress` objects.
+    """
     filters = f_splitter["filter"]
     # If no filters defined, everything passes
     if not filters:
