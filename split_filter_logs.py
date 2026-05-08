@@ -281,6 +281,27 @@ def open_maybe_compressed(file_path, strict=False): #pylint: disable=too-many-re
     return None
 
 def make_dirs(path):
+    """
+    Creates a directory if it does not already exist.
+
+    Checks whether the specified path exists and creates the directory
+    hierarchy when necessary.
+
+    Parameters
+    ----------
+    path : str
+        Directory path to create.
+
+    Behavior
+    --------
+    - Creates intermediate directories as needed.
+    - Does nothing if the directory already exists.
+
+    Notes
+    -----
+    - Thin wrapper around `os.makedirs`.
+    - Intended to simplify repeated directory creation logic throughout the pipeline.
+    """
     if not os.path.exists(path):
         os.makedirs(path)
 
