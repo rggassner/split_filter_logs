@@ -194,6 +194,62 @@ for splitter in SPLITTERS:
     })
 
 def open_maybe_compressed(file_path, strict=False): #pylint: disable=too-many-return-statements
+    """
+    Opens a text or compressed file transparently and returns a readable
+    text stream or iterator.
+
+    The function detects the file format using magic bytes rather than file
+    extensions, allowing reliable handling of compressed forensic artifacts.
+    Supported formats include:
+        - GZIP (`.gz`)
+        - BZIP2 (`.bz2`)
+        - XZ/LZMA (`.xz`, `.lzma`)
+        - ZIP archives (`.zip`)
+        - Plain text files
+
+    Compressed streams are wrapped in buffered readers to improve performance
+    when processing large log datasets.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the file to open.
+    strict : bool, optional
+        If True, raises a `ValueError` when an unsupported or corrupted file
+        is encountered. If False, prints a warning and returns None instead.
+        Default is False.
+
+    Returns
+    -------
+    io.TextIOWrapper or generator or None
+        Returns:
+            - A text stream for plain, gzip, bz2, or xz files.
+            - A generator yielding decoded lines for ZIP archives.
+            - None if the file format is unsupported and `strict=False`.
+
+    Behavior
+    --------
+    - Detects file types using magic headers.
+    - Uses UTF-8 decoding with `errors="ignore"` to maximize resilience
+      against malformed log data.
+    - Streams files incrementally to remain memory-efficient.
+    - Automatically skips directories inside ZIP archives.
+
+    Raises
+    ------
+    ValueError
+        Raised when:
+            - A ZIP archive cannot be processed and `strict=True`.
+            - The file format is unsupported and `strict=True`.
+
+    Notes
+    -----
+    - Designed for high-throughput forensic and log-processing pipelines.
+    - ZIP handling differs slightly from other formats by returning a generator
+      that concatenates lines from all files inside the archive.
+    - Buffer sizes are intentionally large to reduce decompression overhead
+      during sequential reads.
+    """
     # Magic headers
     gzip_magic  = b"\x1f\x8b"
     bz2_magic   = b"BZh"
