@@ -112,6 +112,50 @@ def reset_metadata(tarinfo):
     return tarinfo
 
 def load_filter_list(l_splitter):
+    """
+    Loads and merges filter values from a splitter configuration.
+
+    Retrieves inline filter values defined directly in the splitter
+    configuration and optionally extends them with entries loaded
+    from an external filter file.
+
+    Filter files are read line by line, ignoring:
+        - Empty lines
+        - Comment lines beginning with '#'
+
+    Parameters
+    ----------
+    l_splitter : dict
+        Splitter configuration dictionary that may contain:
+            - "filter" (list): Inline filter values.
+            - "filter_from_file" (str): Path to an external filter file.
+            - "name" (str): Splitter name used for warning messages.
+
+    Returns
+    -------
+    list
+        Combined list of filter values from both inline configuration
+        and optional external file sources.
+
+    Behavior
+    --------
+    - Preserves existing inline filters.
+    - Appends valid entries from the external file.
+    - Reads files using UTF-8 with `surrogateescape` for robust handling
+      of malformed or mixed-encoding data.
+    - Silently skips comments and blank lines.
+
+    Error Handling
+    --------------
+    - If the external filter file cannot be read, a warning is printed
+      and only inline filters are returned.
+
+    Notes
+    -----
+    - Intended for forensic and log-processing environments where filter
+      lists may be maintained separately from the main configuration.
+    - Returned values are not normalized or deduplicated by this function.
+    """
     filters = list(l_splitter.get("filter", []))
     if l_splitter.get("filter_from_file"):
         try:
