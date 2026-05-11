@@ -106,6 +106,35 @@ def get_file_stats(file_path):
     }
 
 def reset_metadata(tarinfo):
+    """
+    Normalizes archive metadata for deterministic and reproducible tar output.
+
+    Resets ownership and timestamp fields of a `TarInfo` object before it is
+    added to an archive, ensuring that generated `.tar` files remain consistent
+    across executions regardless of the originating system or file metadata.
+
+    Parameters
+    ----------
+    tarinfo : tarfile.TarInfo
+        Tar archive member metadata object to normalize.
+
+    Returns
+    -------
+    tarfile.TarInfo
+        Modified `TarInfo` object with sanitized metadata.
+
+    Behavior
+    --------
+    - Sets UID and GID to `0`.
+    - Sets username and group name to `"root"`.
+    - Resets modification time (`mtime`) to `0`.
+
+    Notes
+    -----
+    - Primarily used to create reproducible archives with stable hashes.
+    - Useful in forensic, archival, and build pipelines where deterministic
+      output is important.
+    """
     tarinfo.uid = tarinfo.gid = 0
     tarinfo.uname = tarinfo.gname = "root"
     tarinfo.mtime = 0
