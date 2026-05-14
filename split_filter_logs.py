@@ -1041,8 +1041,18 @@ if __name__ == "__main__":
     # Simple Options (Dynamic Flags)
     group = parser.add_argument_group("Splitter Modules (Simple Mode)")
     for item in metadata:
-        group.add_argument(f"--split_by_{item['name']}", action="store_true", 
-                           help=item.get("description", f"Split by {item['name']}"))
+        module_name = item.get("name")
+        # Get the comment field, default to a generic string if missing
+        module_help = item.get("comment") or item.get("description") or f"Split logs by {module_name}"
+        
+        # Add the argument with the dynamic help text
+        group.add_argument(
+            f"--split_by_{module_name}", 
+            action="store_true", 
+            help=module_help
+        )        
+        #group.add_argument(f"--split_by_{item['name']}", action="store_true", 
+        #                   help=item.get("description", f"Split by {item['name']}"))
     parser.add_argument("--list-modules", action="store_true", help="Show all available modules and exit")
     # Expert Options
     expert = parser.add_argument_group("Expert Options")
