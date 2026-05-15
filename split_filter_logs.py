@@ -89,6 +89,38 @@ def hash_worker(file_path):
     return file_path, stats
 
 def get_file_stats(file_path):
+    """
+    Computes cryptographic hashes and size information for a file.
+
+    Reads the target file incrementally in fixed-size binary chunks to
+    efficiently calculate MD5 and SHA256 digests while minimizing memory usage.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the file to analyze.
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+            - "md5" (str): MD5 hexadecimal digest of the file.
+            - "sha256" (str): SHA256 hexadecimal digest of the file.
+            - "size" (int): File size in bytes.
+
+    Behavior
+    --------
+    - Processes files in streaming mode using 64 KB chunks.
+    - Computes multiple hashes in a single pass over the file.
+    - Retrieves file size directly from the filesystem.
+
+    Notes
+    -----
+    - Designed for forensic integrity verification and digest reporting.
+    - MD5 is included for compatibility and quick identification, while
+      SHA256 provides stronger cryptographic assurance.
+    - Suitable for very large files due to incremental processing.
+    """
     md5_hash = hashlib.md5()
     sha256_hash = hashlib.sha256()
     size = os.path.getsize(file_path)
