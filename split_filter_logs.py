@@ -85,6 +85,33 @@ def get_compiled_splitters(splitter_data, ignore_case):
     return compiled_list
 
 def hash_worker(file_path):
+    """
+    Worker function for parallel file hashing operations.
+
+    Computes integrity and size statistics for a single file by delegating
+    to `get_file_stats`, returning both the original file path and the
+    generated metadata.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the file to hash.
+
+    Returns
+    -------
+    tuple
+        Tuple containing:
+            - file_path (str): Original file path.
+            - stats (dict): Dictionary returned by `get_file_stats`
+              containing file hashes and size information.
+
+    Notes
+    -----
+    - Intended for use with multiprocessing pools such as
+      `Pool.imap_unordered`.
+    - Separating this wrapper simplifies parallel aggregation of results
+      while preserving file path context.
+    """
     stats = get_file_stats(file_path)
     return file_path, stats
 
