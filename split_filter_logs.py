@@ -48,23 +48,26 @@ def get_compiled_splitters(splitter_data, ignore_case):
         # 1. Compile the Extraction Regex (Required for 'ip' and 'string' types)
         if "split_function" in splitter:
             pattern = re.compile(splitter["split_function"], flags)
-            match = re.search(r'\?P<(\w+)>', splitter["split_function"])
-            group = match.group(1) if match else None
+            compiled_match = re.search(r'\?P<(\w+)>', splitter["split_function"])
+            group = compiled_match.group(1) if compiled_match else None
 
         # 2. Prepare the Filter Logic
         if ftype == "start_string":
-            if not raw_filters: continue
+            if not raw_filters: 
+                continue
             filter_set = tuple(f.lower() if ignore_case else f for f in raw_filters if f)
         
         elif ftype == "global_string":
-            if not raw_filters: continue
+            if not raw_filters:
+                continue
             filter_set = {f.lower() if ignore_case else f for f in raw_filters if f}
             
         elif ftype == "ip":
             # Convert raw strings into IP objects for math-based comparison
             filter_set = []
             for fr in raw_filters:
-                if not fr: continue
+                if not fr:
+                    continue
                 try:
                     # Logic: if it has a slash, it's a network/CIDR; otherwise, it's a single address
                     filter_set.append(ipaddress.ip_network(fr, strict=False) if "/" in fr else ipaddress.ip_address(fr))
