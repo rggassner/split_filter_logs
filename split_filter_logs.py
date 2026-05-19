@@ -43,7 +43,7 @@ def get_compiled_splitters(splitter_data, ignore_case):
         
         pattern = None
         group = splitter.get("name")
-        filter_set = None
+        cs_filter_set = None
 
         # 1. Compile the Extraction Regex (Required for 'ip' and 'string' types)
         if "split_function" in splitter:
@@ -55,32 +55,32 @@ def get_compiled_splitters(splitter_data, ignore_case):
         if ftype == "start_string":
             if not raw_filters: 
                 continue
-            filter_set = tuple(f.lower() if ignore_case else f for f in raw_filters if f)
+            cs_filter_set = tuple(f.lower() if ignore_case else f for f in raw_filters if f)
         
         elif ftype == "global_string":
             if not raw_filters:
                 continue
-            filter_set = {f.lower() if ignore_case else f for f in raw_filters if f}
+            cs_filter_set = {f.lower() if ignore_case else f for f in raw_filters if f}
             
         elif ftype == "ip":
             # Convert raw strings into IP objects for math-based comparison
-            filter_set = []
+            cs_filter_set = []
             for fr in raw_filters:
                 if not fr:
                     continue
                 try:
                     # Logic: if it has a slash, it's a network/CIDR; otherwise, it's a single address
-                    filter_set.append(ipaddress.ip_network(fr, strict=False) if "/" in fr else ipaddress.ip_address(fr))
+                    cs_filter_set.append(ipaddress.ip_network(fr, strict=False) if "/" in fr else ipaddress.ip_address(fr))
                 except ValueError:
                     print(f"Warning: invalid IP filter: {fr}")
         
         else: # Default/String Regex type
-            filter_set = {f.lower() if ignore_case else f for f in raw_filters if f}
+            cs_filter_set = {f.lower() if ignore_case else f for f in raw_filters if f}
 
         compiled_list.append({
             "name": splitter["name"],
             "regex": pattern,
-            "filter": filter_set,
+            "filter": cs_filter_set,
             "group": group,
             "type": ftype,
             "ignore_case": ignore_case 
