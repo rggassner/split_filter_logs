@@ -42,14 +42,14 @@ def get_compiled_splitters(splitter_data, ignore_case):
         ftype = splitter.get("type", "string")
         
         pattern = None
-        group = splitter.get("name")
+        cs_group = splitter.get("name")
         cs_filter_set = None
 
         # 1. Compile the Extraction Regex (Required for 'ip' and 'string' types)
         if "split_function" in splitter:
             pattern = re.compile(splitter["split_function"], flags)
             compiled_match = re.search(r'\?P<(\w+)>', splitter["split_function"])
-            group = compiled_match.group(1) if compiled_match else None
+            cs_group = compiled_match.group(1) if compiled_match else None
 
         # 2. Prepare the Filter Logic
         if ftype == "start_string":
@@ -81,7 +81,7 @@ def get_compiled_splitters(splitter_data, ignore_case):
             "name": splitter["name"],
             "regex": pattern,
             "filter": cs_filter_set,
-            "group": group,
+            "group": cs_group,
             "type": ftype,
             "ignore_case": ignore_case 
         })
