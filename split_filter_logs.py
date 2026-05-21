@@ -41,13 +41,13 @@ def get_compiled_splitters(splitter_data, ignore_case):
         raw_filters = load_filter_list(splitter)
         ftype = splitter.get("type", "string")
         
-        pattern = None
+        cs_pattern = None
         cs_group = splitter.get("name")
         cs_filter_set = None
 
         # 1. Compile the Extraction Regex (Required for 'ip' and 'string' types)
         if "split_function" in splitter:
-            pattern = re.compile(splitter["split_function"], flags)
+            cs_pattern = re.compile(splitter["split_function"], flags)
             compiled_match = re.search(r'\?P<(\w+)>', splitter["split_function"])
             cs_group = compiled_match.group(1) if compiled_match else None
 
@@ -79,7 +79,7 @@ def get_compiled_splitters(splitter_data, ignore_case):
 
         compiled_list.append({
             "name": splitter["name"],
-            "regex": pattern,
+            "regex": cs_pattern,
             "filter": cs_filter_set,
             "group": cs_group,
             "type": ftype,
@@ -1138,7 +1138,7 @@ if __name__ == "__main__":
     # Pass args to main
     main(args.input_dir, args.output_dir, args.processes, args.ignore_case, 
          args.no_sort, args.conf, args.no_hash, args.no_compress, 
-         args.tmp_dir, args.sort_mem, args)    
+         args.tmp_dir, args.sort_mem, args)
 #TODO
 #Check if digest shows input files even without hashing
 #Add --no-digest option
