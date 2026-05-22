@@ -39,7 +39,7 @@ def get_compiled_splitters(splitter_data, ignore_case):
             continue
 
         raw_filters = load_filter_list(splitter)
-        ftype = splitter.get("type", "string")
+        cs_ftype = splitter.get("type", "string")
         
         cs_pattern = None
         cs_group = splitter.get("name")
@@ -52,17 +52,17 @@ def get_compiled_splitters(splitter_data, ignore_case):
             cs_group = compiled_match.group(1) if compiled_match else None
 
         # 2. Prepare the Filter Logic
-        if ftype == "start_string":
+        if cs_ftype == "start_string":
             if not raw_filters: 
                 continue
             cs_filter_set = tuple(f.lower() if ignore_case else f for f in raw_filters if f)
         
-        elif ftype == "global_string":
+        elif cs_ftype == "global_string":
             if not raw_filters:
                 continue
             cs_filter_set = {f.lower() if ignore_case else f for f in raw_filters if f}
             
-        elif ftype == "ip":
+        elif cs_ftype == "ip":
             # Convert raw strings into IP objects for math-based comparison
             cs_filter_set = []
             for fr in raw_filters:
@@ -82,7 +82,7 @@ def get_compiled_splitters(splitter_data, ignore_case):
             "regex": cs_pattern,
             "filter": cs_filter_set,
             "group": cs_group,
-            "type": ftype,
+            "type": cs_ftype,
             "ignore_case": ignore_case 
         })
     return compiled_list
@@ -1136,8 +1136,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # Pass args to main
-    main(args.input_dir, args.output_dir, args.processes, args.ignore_case, 
-         args.no_sort, args.conf, args.no_hash, args.no_compress, 
+    main(args.input_dir, args.output_dir, args.processes, args.ignore_case,
+         args.no_sort, args.conf, args.no_hash, args.no_compress,
          args.tmp_dir, args.sort_mem, args)
 #TODO
 #Check if digest shows input files even without hashing
