@@ -52,8 +52,8 @@ It ingests raw or compressed logs, extracts relevant data using configurable rul
 ├── script.py
 ├── splitters.conf
 ├── splitters/
-│   ├── module1.txt
-│   ├── module2.txt
+│   ├── module1
+│   ├── module2
 │   └── ...
 ```
 
@@ -172,7 +172,7 @@ Each splitter includes:
   "name": "ip",
   "type": "ip",
   "split_function": "(?P<ip>\\b\\d+\\.\\d+\\.\\d+\\.\\d+\\b)",
-  "filter_from_file": "splitters/ip.txt",
+  "filter_from_file": "splitters/ip",
   "enabled": true
 }
 ```
